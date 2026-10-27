@@ -26,8 +26,7 @@ package final class StreamCoordinator {
     /// Each connected client's wanted rate (60 for one that has not said). The stream runs at the
     /// highest, so a ProMotion device is not held to a 60 Hz one beside it; a re-sent viewport
     /// from either is then a no-op instead of a restart. Cleared when the client leaves.
-    private var clientFPS: [ObjectIdentifier: Int] = [:]
-    private var wantedFPS: Int { min(maxFPS, max(24, clientFPS.values.max() ?? 60)) }
+    private var wantedFPS: Int { min(maxFPS, max(24, clients.values.compactMap(\.fps).max() ?? 60)) }
     /// What the next pipeline will run at: the software encoder is not asked for more than 60.
     private var effectiveFPS: Int { useSoftwareEncoder ? min(wantedFPS, 60) : wantedFPS }
     /// The bitrate knob is per 60 fps; a faster stream gets proportionally more so each frame
@@ -197,25 +196,14 @@ package final class StreamCoordinator {
     /// The app of the window `select` last resolved, so the sound still finds it while a regular-mode
     /// window streams on off the catalog's list (`windowsChanged`'s looks, issue #57; `audioKey`).
     private var streamedPID: (window: CGWindowID, pid: pid_t)?
-    /// Each connection's kind 17 changes of the last second (applied or refused), and when its
-    /// "ignored" line was last printed: `settingsPerSecond` a second, one line a second at most.
-    private var settingsArrivals: [ObjectIdentifier: [CFAbsoluteTime]] = [:]
-    private var settingsIgnoredLineAt: [ObjectIdentifier: CFAbsoluteTime] = [:]
     static let settingsPerSecond = 4
     /// Trackpad gestures (kind 28, docs/trackpad-gestures-plan.md §7): the view Sill's last gesture
-    /// opened, which the opposite gesture closes (GestureChords), and each connection's gestures of
-    /// the last second: `gesturesPerSecond` a second, the rest dropped with one line a minute.
+    /// opened, which the opposite gesture closes (GestureChords).
     private var gestureChords = GestureChords()
-    private var gestureArrivals: [ObjectIdentifier: [CFAbsoluteTime]] = [:]
     static let gesturesPerSecond = 4
     private lazy var gestureDrops = RefusalSummary(queue: .main, categories: ["gestures"]) { counts in
         "Gestures ignored: \(counts["gestures"] ?? 0) in a minute, from devices sending more than \(StreamCoordinator.gesturesPerSecond) a second."
     }
-    /// A device's keyframe requests (kind 44, issue #101: its picture was interrupted): when each
-    /// connection's last one was taken, at most one a second, the rest dropped with one line a minute.
-    /// A device asks once per interruption, again only when the keyframe has not come in 4 s or more,
-    /// 2 s apart at least (KeyframeRecovery), and each costs a keyframe to every device.
-    private var keyframeRequestAt: [ObjectIdentifier: CFAbsoluteTime] = [:]
     /// TEST ONLY. `SILL_TEST_KEYFRAME_IGNORE=<n>` on a --synthetic host: the first n keyframe requests
     /// it takes are ignored, with a line each, as a Mac from before kind 44 skips every one, so a
     /// device's ask again after its wait runs for real (`keyframeIgnoreHook`). Zero otherwise.
@@ -259,8 +247,29 @@ package final class StreamCoordinator {
     /// identity, no TXT tag, no kind 18, no remote door, no `away` in kind 16: exactly the host
     /// as before.
     package let remote: RemoteAccess?
-    /// Each admitted connection's route (home and its origin, or the remote door's), from the server.
-    private var routes: [ObjectIdentifier: ClientRoute] = [:]
+    /// Main-actor state belonging to one connection. The first write creates its record, since
+    /// messages and registration callbacks each hop from the network queue independently. The
+    /// disconnect callback removes it; server-owned network state stays on the network queue.
+    private struct ClientState {
+        var fps: Int?
+        // Kind 17 changes in the last second and the last "ignored" line, limited per connection.
+        var settingsArrivals: [CFAbsoluteTime] = []
+        var settingsIgnoredLineAt: CFAbsoluteTime?
+        // Gestures in the last second; excess is dropped and summarized.
+        var gestureArrivals: [CFAbsoluteTime] = []
+        // Kind 44 requests are limited to one per second (KeyframeRecovery).
+        var keyframeRequestAt: CFAbsoluteTime?
+        var route: ClientRoute?
+        // Only connections whose catalog went out join settings publishes.
+        var connection: NWConnection?
+        // Answers do not change the last published state.
+        var lastPublished: HostSettingsState?
+        // A report carries the bitrate at judgment; settings omit it when the target has changed.
+        var linkReport: LinkReport?
+        // Pairing-code requests (kind 21) are limited to one per 30 seconds.
+        var lastPairingWanted: CFAbsoluteTime?
+    }
+    private var clients: [ObjectIdentifier: ClientState] = [:]
     /// Away from home (docs/remote-bundle-plan.md §5; AwayPolicy): every connected device is away,
     /// so the away quality is the target. Kept while no device is connected; the next to register
     /// decides (`routesChanged`). What the Mac's card, menu and every device are told.
@@ -273,19 +282,9 @@ package final class StreamCoordinator {
     /// Nothing else applies the flip meanwhile but a `select` that runs anyway, which takes it.
     private var flipWait: ObjectIdentifier?
     private var flipWaitToken = 0
-    /// Each connection whose catalog went out (`sendCatalog`): the ones settings states reach.
-    private var connections: [ObjectIdentifier: NWConnection] = [:]
-    /// Each connection's link while it does not keep up (LinkJudge, docs/remote-bundle-plan.md §6.5):
-    /// its kind 16's `link`, and the card's. A state leaves out a report whose bitrate (the running
-    /// one when it was judged) is no longer the target's, so the answer to the pick that lowers it
-    /// already carries none (the restart's reset follows). The bitrate alone: a change of the capture
-    /// scale alone may restart nothing (the software encoder runs at points).
-    private var linkReports: [ObjectIdentifier: LinkReport] = [:]
     /// The quality the devices' links are judged at: the running stream's (`select`'s commit), nil
     /// while nothing streams. A restart that keeps it keeps their judgement (LinkJudge.judgedAfresh).
     private var judgedQuality: LinkJudge.Quality?
-    /// When each connection last asked for a pairing code (kind 21): once per 30 s.
-    private var lastPairingWanted: [ObjectIdentifier: CFAbsoluteTime] = [:]
     /// The streamed app's menus, for the devices that asked for them (kinds 24, 25 and 27,
     /// MenuMirror). Reads and presses nothing for a device that never asked.
     let menus: MenuMirror
@@ -415,7 +414,7 @@ package final class StreamCoordinator {
             Task { @MainActor in
                 guard let self else { return }
                 let id = ObjectIdentifier(connection)
-                self.routes[id] = route
+                self.clients[id, default: ClientState()].route = route
                 // A paired device shows its paired name until its own stats arrive, and a remote one
                 // its route; a home device its link (Wired, Wi-Fi, Direct) as soon as it is known.
                 self.status.update {
@@ -451,17 +450,8 @@ package final class StreamCoordinator {
         server.onClientDisconnected = { [weak self] connection in
             Task { @MainActor in
                 guard let self else { return }
-                self.clientFPS[ObjectIdentifier(connection)] = nil
-                self.settingsArrivals[ObjectIdentifier(connection)] = nil
-                self.settingsIgnoredLineAt[ObjectIdentifier(connection)] = nil
                 let id = ObjectIdentifier(connection)
-                self.gestureArrivals[id] = nil
-                self.keyframeRequestAt[id] = nil
-                self.routes[id] = nil
-                self.lastPairingWanted[id] = nil
-                self.connections[id] = nil
-                self.lastPublished[id] = nil
-                self.linkReports[id] = nil
+                self.clients[id] = nil
                 if self.flipWait == id { self.flipWait = nil }
                 self.menus.clientLeft(connection)
                 self.clipboard.clientLeft(connection)
@@ -484,7 +474,10 @@ package final class StreamCoordinator {
                 let wasEmpty = self.catalog.clientCount == 0
                 self.catalog.clientCount = count          // the catalog idles itself at 0
                 // Nobody is watching: stop capturing and encoding. The next client picks afresh.
-                if count == 0 { self.viewport = nil; self.clientFPS = [:] }   // the next device starts from scratch
+                if count == 0 {
+                    self.viewport = nil
+                    for id in Array(self.clients.keys) { self.clients[id]?.fps = nil } // the next device starts from scratch
+                }
                 if count == 0 { self.gestureChords.forget() }                 // and did not open a view it could close
                 // On the software encoder, the hardware is checked only while someone watches.
                 if count == 0 { self.stopRecheck() } else { self.devicesPresent(firstArrived: wasEmpty) }
@@ -762,13 +755,13 @@ package final class StreamCoordinator {
     @discardableResult
     private func routesChanged(joined: ObjectIdentifier?, endpoint: String?) -> Bool {
         let before = awayWanted
-        awayWanted = AwayPolicy.wanted(devicesAway: routes.values.map(\.isAway), current: awayWanted)
+        awayWanted = AwayPolicy.wanted(devicesAway: clients.values.compactMap(\.route).map(\.isAway), current: awayWanted)
         let flipped = awayWanted != before
         if flipped {
             print(awayWanted ? AwayPolicy.awayLine(target) : AwayPolicy.homeLine(target, endpoint: endpoint ?? "a device"))
             if let joined { flipAwaits(joined) } else { flipWait = nil }
         }
-        status.update { $0.away = awayWanted && !routes.isEmpty }   // publishes (status.onChange)
+        status.update { $0.away = awayWanted && clients.values.contains { $0.route != nil } }   // publishes (status.onChange)
         return flipped
     }
 
@@ -803,7 +796,7 @@ package final class StreamCoordinator {
     /// low-latency rate control follow a live change.
     private func restartNeeded(for new: HostConfig, away: Bool) -> Bool {
         guard active != .none else { return false }
-        let wanted = min(new.maxFPS, max(24, clientFPS.values.max() ?? 60))
+        let wanted = min(new.maxFPS, max(24, clients.values.compactMap(\.fps).max() ?? 60))
         let newFPS = useSoftwareEncoder ? min(wanted, 60) : wanted
         let pair = new.effective(away: away)
         let newScale = useSoftwareEncoder ? min(pair.captureScale, 1.0) : pair.captureScale
@@ -907,12 +900,13 @@ package final class StreamCoordinator {
     /// "keeping up again" only for a judged recovery, never for a restart's reset. The snapshot
     /// change publishes, and each connection's state carries its own.
     private func linkChanged(_ id: ObjectIdentifier, _ v: LinkJudge.Verdict) {
-        guard routes[id] != nil else { return }       // gone meanwhile
+        guard clients[id]?.route != nil else { return }       // gone meanwhile
         let device = status.snapshot.devices.first { $0.id == id }
         let who = device?.name ?? device?.endpoint ?? "a device"
         switch v.state {
         case .fine:
-            let had = linkReports.removeValue(forKey: id) != nil
+            let had = clients[id]?.linkReport != nil
+            clients[id]?.linkReport = nil
             status.update {
                 guard let i = $0.devices.firstIndex(where: { $0.id == id }) else { return }
                 $0.devices[i].link = nil
@@ -926,12 +920,12 @@ package final class StreamCoordinator {
             let report = LinkReport(state: behind ? LinkReport.behind : LinkReport.stalled, withheldPerSecond: v.withheld,
                                     bitrate: bitrate, carriedKbps: v.carriedKbps,
                                     suggestedBitrate: suggestion?.bitrate, suggestedCaptureScale: suggestion?.captureScale)
-            let previous = linkReports[id]
+            let previous = clients[id]?.linkReport
             // The same state with the same suggestion (the judge reporting its rate as it moves): the
             // device and the card have nothing new to show, so nothing is published.
             if let previous, previous.state == report.state, previous.suggestedBitrate == report.suggestedBitrate,
                previous.suggestedCaptureScale == report.suggestedCaptureScale { return }
-            linkReports[id] = report
+            clients[id]?.linkReport = report
             let shown = HostStatusSnapshot.LinkStatus(state: behind ? .behind : .stalled, withheld: v.withheld, bitrate: bitrate,
                                                       carriedKbps: v.carriedKbps, suggestedBitrate: suggestion?.bitrate,
                                                       suggestedCaptureScale: suggestion?.captureScale)
@@ -1018,14 +1012,14 @@ package final class StreamCoordinator {
             guard let gesture = Wire.decode(TrackpadGesture.self, from: message.payload) else { return }
             let id = ObjectIdentifier(connection)
             let now = CFAbsoluteTimeGetCurrent()
-            var recent = (gestureArrivals[id] ?? []).filter { now - $0 < 1 }
+            var recent = (clients[id]?.gestureArrivals ?? []).filter { now - $0 < 1 }
             guard recent.count < Self.gesturesPerSecond else {
-                gestureArrivals[id] = recent
+                clients[id, default: ClientState()].gestureArrivals = recent
                 gestureDrops.count("gestures")
                 return
             }
             recent.append(now)
-            gestureArrivals[id] = recent
+            clients[id, default: ClientState()].gestureArrivals = recent
             queueGesture(gesture, from: deviceName(connection))
         case .keyframeRequest:
             // A device's picture was interrupted (its display layer failed, or iOS stopped it while
@@ -1035,11 +1029,11 @@ package final class StreamCoordinator {
             // restart or a pick: nothing else streams again and no window comes forward.
             let id = ObjectIdentifier(connection)
             let now = CFAbsoluteTimeGetCurrent()
-            if let last = keyframeRequestAt[id], now >= last, now - last < Self.keyframeRequestSpacing {
+            if let last = clients[id]?.keyframeRequestAt, now >= last, now - last < Self.keyframeRequestSpacing {
                 keyframeRequestDrops.count("keyframes")
                 return
             }
-            keyframeRequestAt[id] = now
+            clients[id, default: ClientState()].keyframeRequestAt = now
             if keyframeRequestsToIgnore > 0 {      // TEST ONLY: SILL_TEST_KEYFRAME_IGNORE
                 keyframeRequestsToIgnore -= 1
                 print("Test keyframes: ignored a keyframe request from \(deviceName(connection)) (\(keyframeRequestsToIgnore) more to ignore).")
@@ -1052,7 +1046,7 @@ package final class StreamCoordinator {
             guard let v = Wire.decode(Viewport.self, from: message.payload) else { return }
             viewport = v
             let id = ObjectIdentifier(connection)
-            clientFPS[id] = v.fps ?? 60
+            clients[id, default: ClientState()].fps = v.fps ?? 60
             // The flip its connection made waited for this, its rate (`flipAwaits`): the restart the
             // rate needs takes the flip too, and the flip alone restarts once when the rate needs none.
             let flipWaited = flipWait == id
@@ -1066,11 +1060,11 @@ package final class StreamCoordinator {
             // At a TLS home door only from an unpaired session (Require pairing off), which goes
             // through the ask rule; a paired session's is ignored.
             let id = ObjectIdentifier(connection)
-            guard let remote, case .home(let origin, let peer)? = routes[id], [.loopback, .lan, .direct].contains(origin) else { return }
+            guard let remote, case .home(let origin, let peer)? = clients[id]?.route, [.loopback, .lan, .direct].contains(origin) else { return }
             if server.homeTLS, peer.map({ remote.isPaired($0.fingerprint) }) ?? true { return }
             let now = CFAbsoluteTimeGetCurrent()
-            if let last = lastPairingWanted[id], now - last < 30 { return }
-            lastPairingWanted[id] = now
+            if let last = clients[id]?.lastPairingWanted, now - last < 30 { return }
+            clients[id, default: ClientState()].lastPairingWanted = now
             var session: (fingerprint: Data, source: String, display: String, from: String, fromThisMac: Bool)?
             if server.homeTLS, let peer, let s = Door.source(of: connection) {
                 let thisMac = DoorPolicy.isFromThisMac(source: s.bytes, ownAddresses: InterfaceSnapshot.ownAddresses())
@@ -1092,27 +1086,27 @@ package final class StreamCoordinator {
             // device's ledger still hears back.
             let id = ObjectIdentifier(connection)
             let now = CFAbsoluteTimeGetCurrent()
-            var recent = (settingsArrivals[id] ?? []).filter { now - $0 < 1 }
+            var recent = (clients[id]?.settingsArrivals ?? []).filter { now - $0 < 1 }
             if recent.count >= Self.settingsPerSecond {
-                settingsArrivals[id] = recent
-                if now - (settingsIgnoredLineAt[id] ?? 0) >= 1 {
-                    settingsIgnoredLineAt[id] = now
+                clients[id, default: ClientState()].settingsArrivals = recent
+                if now - (clients[id]?.settingsIgnoredLineAt ?? 0) >= 1 {
+                    clients[id, default: ClientState()].settingsIgnoredLineAt = now
                     print("Settings from \(who) ignored: more than \(Self.settingsPerSecond) changes a second.")
                 }
                 server.send(settingsMessage(settingsState(for: id, answering: change.token)), to: connection)
                 return
             }
             recent.append(now)
-            settingsArrivals[id] = recent
+            clients[id, default: ClientState()].settingsArrivals = recent
             // A connection whose route is not known (never: it is set before any message is
             // handled) counts as remote, so nothing it sends can widen exposure.
             let (ok, refused) = DeviceSettings.accepted(change, virtualDisplayAvailable: appKitLoop,
-                                                        fromRemote: routes[id].map { $0.isRemote } ?? true)
+                                                        fromRemote: clients[id]?.route.map { $0.isRemote } ?? true)
             if !refused.isEmpty { print("Settings from \(who) refused: \(refused.joined(separator: ", "))") }
             if !ok.isEmpty, !shuttingDown {
                 let before = target
                 // A device away from home sets the away quality, never the home one (§5.1).
-                let away = routes[id]?.isAway ?? false
+                let away = clients[id]?.route?.isAway ?? false
                 // The app: the hook assigns its settings, whose didSet has already set the target
                 // (this call then finds it equal). The CLI: the change lands on the target.
                 setTarget(onDeviceSettingsChange?(ok, away) ?? (away ? before.applyingAway(ok) : before.applying(ok)))
@@ -2658,8 +2652,8 @@ package final class StreamCoordinator {
         let id = ObjectIdentifier(connection)
         let state = settingsState(for: id)
         server.send(settingsMessage(state), to: connection)
-        lastPublished[id] = state
-        connections[id] = connection
+        clients[id, default: ClientState()].lastPublished = state
+        clients[id, default: ClientState()].connection = connection
         // Who this Mac is and how to reach it from afar (kind 18, signed), on both doors, only from
         // a host with an identity. An older device skips it too.
         if let info = remote?.macInfoMessage() { server.send(info, to: connection) }
@@ -2676,10 +2670,6 @@ package final class StreamCoordinator {
 
     // MARK: Settings to devices
 
-    /// The last state each connection was sent: at connect (`sendCatalog`) and by each publish.
-    /// Answers never touch it.
-    private var lastPublished: [ObjectIdentifier: HostSettingsState] = [:]
-
     /// Connection `id`'s state (docs/remote-bundle-plan.md §5.4): the pair its controls set (the
     /// away quality for a device away), the home and away qualities with which one is the target
     /// (`away`, from a host with an identity, `remote`: SillHost --pairing alone too, where no
@@ -2692,10 +2682,10 @@ package final class StreamCoordinator {
     /// change, and none comes while nothing streams.
     private func settingsState(for id: ObjectIdentifier, answering: Int? = nil) -> HostSettingsState {
         let t = target, s = status.snapshot
-        let thisAway = routes[id]?.isAway ?? false
+        let thisAway = clients[id]?.route?.isAway ?? false
         // A report about the bitrate that runs while it is still the target's; one about a bitrate a
         // pick has just replaced is stale (the restart's reset clears it a moment later).
-        let link = linkReports[id].flatMap { $0.bitrate == t.effective(away: awayWanted).bitrate ? $0 : nil }
+        let link = clients[id]?.linkReport.flatMap { $0.bitrate == t.effective(away: awayWanted).bitrate ? $0 : nil }
         let away = remote.map { _ in
             AwayQuality(homeBitrate: t.bitrate, homeCaptureScale: Double(t.captureScale),
                         awayBitrate: t.awayBitrate, awayCaptureScale: Double(t.awayCaptureScale),
@@ -2734,10 +2724,11 @@ package final class StreamCoordinator {
     /// it was sent. Prints nothing, so the CLI's output only changes when a device sends a change.
     private func publishSettings() {
         var messages: [(NWConnection, StreamMessage)] = []
-        for (id, connection) in connections {
+        for (id, client) in clients {
+            guard let connection = client.connection else { continue }
             let state = settingsState(for: id)
-            guard state != lastPublished[id] else { continue }
-            lastPublished[id] = state
+            guard state != client.lastPublished else { continue }
+            clients[id]?.lastPublished = state
             messages.append((connection, settingsMessage(state)))
         }
         if !messages.isEmpty { server.send(each: messages) }
