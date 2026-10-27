@@ -1,5 +1,9 @@
 # Sill
 
+This fork adds Chinese pairing and connection flows and an Xcode-based Mac development app.
+Open `Sill.xcworkspace` or run `./script/build_and_run.sh`; see
+[fork development](docs/fork-development.md) for the app targets, signing and upstream workflow.
+
 Any window from your Mac, on your iPhone and iPad.
 
 Sill shows a window from your Mac, or the whole desktop, on your iPhone or

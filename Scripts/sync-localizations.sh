@@ -31,9 +31,10 @@ require_target() {
 if [ "$platform" != ios ]; then
     test -f Packaging/Localizable.xcstrings || { echo 'error: missing Packaging/Localizable.xcstrings' >&2; exit 1; }
     echo 'Extracting Mac strings...'
-    xcodebuild -scheme SillMenuBar -configuration Debug -destination 'platform=macOS' \
+    xcodebuild -workspace Sill.xcworkspace -scheme SillMacApp -configuration Debug -destination 'platform=macOS' \
         -derivedDataPath "$tmp/mac" SWIFT_EMIT_LOC_STRINGS=YES CODE_SIGNING_ALLOWED=NO build -quiet
-    require_target "$tmp/mac/Build/Intermediates.noindex" SillMenuBar-p
+    require_target "$tmp/mac/Build/Intermediates.noindex" SillMacApp
+    require_target "$tmp/mac/Build/Intermediates.noindex" SillMac-t
     require_target "$tmp/mac/Build/Intermediates.noindex" SillHostCore-t
     require_target "$tmp/mac/Build/Intermediates.noindex" StreamProtocol-t
 fi

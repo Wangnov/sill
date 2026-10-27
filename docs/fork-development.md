@@ -8,11 +8,20 @@ xcodebuild -workspace Sill.xcworkspace -scheme SillMacApp -configuration Debug \
   -destination 'platform=macOS' -derivedDataPath .build/native-mac build
 ```
 
+For the daily build/run loop, use `./script/build_and_run.sh` or the Codex Run action. It
+builds into `.build/DerivedData`, stops only the development executable from this checkout,
+and writes its log to `.build/Sill-Development.log`. `--verify` checks that it stays running;
+`--debug` starts LLDB and `--logs` follows that log. Extra arguments go to the app, for example:
+
+```sh
+./script/build_and_run.sh --verify --synthetic
+```
+
 Debug builds `Sill Development.app`, with bundle ID `local.sill.fork.mac.debug` and ad hoc
 signing by default. `CODE_SIGNING_ALLOWED=NO` also builds without a certificate. Settings,
 permissions and login items follow this development bundle ID. Its explicit
 `SillIdentityNamespace` is `$(PRODUCT_BUNDLE_IDENTIFIER).remote`, for a separate pairing
-identity once the fork's namespace support is included. Preview and `--synthetic` launches
+identity through the fork's namespace support. Preview and `--synthetic` launches
 never use the production identity. No step installs over `/Applications/Sill.app`.
 
 Release builds `Sill.app` with bundle ID `local.sill.fork.mac`. Override
@@ -29,3 +38,8 @@ The package's `SillMac` library retains AppKit startup, self-tests and shutdown 
 its only public entry is `SillMacApp.run()`. `swift build --product SillMenuBar` and
 `Scripts/make-app.sh` continue to use a thin executable entry over the same library. Catalog
 extraction from package sources remains the explicit localization sync step.
+
+`feat/i18n` contains the upstream-compatible localization contribution. The fork's main
+branch also carries the app project and data-ownership refactors; use `upstream/main` as the
+comparison base when preparing further contributions. The iOS app still needs your own team
+and bundle identifier in Signing & Capabilities for an actual device build.
