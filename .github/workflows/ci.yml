@@ -101,6 +101,19 @@ jobs:
             test -s "$resources/InfoPlist.strings"
           done
 
+      # The fork's native target owns the main bundle resources and SDK metadata. Keep the
+      # script-based compatibility build above so upstream's SwiftPM entry remains exercised.
+      - name: Build the native Mac app (Debug, not signed)
+        run: |
+          xcodebuild -project MacApp/Sill.xcodeproj -scheme SillMacApp \
+            -destination 'platform=macOS' -configuration Debug \
+            -derivedDataPath "$RUNNER_TEMP/MacDerivedData" CODE_SIGNING_ALLOWED=NO build
+          app="$RUNNER_TEMP/MacDerivedData/Build/Products/Debug/Sill Development.app"
+          for language in en zh-Hans zh-Hant; do
+            test -s "$app/Contents/Resources/$language.lproj/Localizable.strings"
+            test -s "$app/Contents/Resources/$language.lproj/InfoPlist.strings"
+          done
+
       # The iOS app needs the iOS 27.1 SDK (the iPhone Duo's hinge and fold, docs/iphone-duo-plan.md):
       # the newest Xcode 27.1 that is not a beta, else its newest beta (the image had only
       # Xcode_27.1_beta.app, 27A9269, in October 2026); without either, a warning and the newest Xcode
