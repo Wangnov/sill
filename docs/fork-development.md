@@ -24,6 +24,14 @@ permissions and login items follow this development bundle ID. Its explicit
 identity through the fork's namespace support. Preview and `--synthetic` launches
 never use the production identity. No step installs over `/Applications/Sill.app`.
 
+If Accessibility appears enabled for the development app but `AXIsProcessTrusted()` is false,
+a previous ad hoc build's authorization may no longer match the current binary. For this symptom,
+reset only the development app's Accessibility authorization with
+`tccutil reset Accessibility local.sill.fork.mac.debug`, then allow the exact current
+`Sill Development.app` again in System Settings. This does not reset Screen Recording. A stable
+Apple Development signing identity can reduce authorization loss across rebuilds; without a
+certificate, keep the same binary throughout device testing.
+
 Release builds `Sill.app` with bundle ID `local.sill.fork.mac`. Override
 `PRODUCT_BUNDLE_IDENTIFIER`, `DEVELOPMENT_TEAM` and `CODE_SIGN_IDENTITY` for your own release
 identity. The project has no upstream team ID or restricted keychain entitlement. A local
