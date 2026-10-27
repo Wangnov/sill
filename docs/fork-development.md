@@ -51,3 +51,8 @@ extraction from package sources remains the explicit localization sync step.
 branch also carries the app project and data-ownership refactors; use `upstream/main` as the
 comparison base when preparing further contributions. The iOS app still needs your own team
 and bundle identifier in Signing & Capabilities for an actual device build.
+
+Session backgrounding, the experimental notification inbox and personal APNs configuration are
+documented in [session and notification continuity](session-and-notification-continuity.md).
+The fork's iOS targets use separate Debug/Release bundle IDs and have no upstream development
+team. Their push entitlement requires your own matching App ID and provisioning profile.

@@ -65,6 +65,10 @@
 		A1000001000000000000A402 /* TourOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000F402 /* TourOverlay.swift */; };
 		A1000001000000000000AB01 /* DuoPosture.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FB01 /* DuoPosture.swift */; };
 		A1000001000000000000AB02 /* DuoPostureReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FB02 /* DuoPostureReader.swift */; };
+		5B10D492CCC187CE4F4B5764 /* BackgroundSessionIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05DA68AD70DA545DECECB054 /* BackgroundSessionIntent.swift */; };
+		B4B903B2E1406FFDDA3DEFA6 /* NotificationInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6416A92AD3B0C47DAC54C37 /* NotificationInbox.swift */; };
+		53DC718A6CE21E6409F1E35B /* NotificationInboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 323A4CB635E5C7D74E45989E /* NotificationInboxView.swift */; };
+		1B391627F83EED994FB774F5 /* StreamClient+Notifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1369CD33C82372F9C53328D2 /* StreamClient+Notifications.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -128,6 +132,10 @@
 		A1000001000000000000F402 /* TourOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TourOverlay.swift; sourceTree = "<group>"; };
 		A1000001000000000000FB01 /* DuoPosture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuoPosture.swift; sourceTree = "<group>"; };
 		A1000001000000000000FB02 /* DuoPostureReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuoPostureReader.swift; sourceTree = "<group>"; };
+		05DA68AD70DA545DECECB054 /* BackgroundSessionIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BackgroundSessionIntent.swift"; sourceTree = "<group>"; };
+		D6416A92AD3B0C47DAC54C37 /* NotificationInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NotificationInbox.swift"; sourceTree = "<group>"; };
+		323A4CB635E5C7D74E45989E /* NotificationInboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NotificationInboxView.swift"; sourceTree = "<group>"; };
+		1369CD33C82372F9C53328D2 /* StreamClient+Notifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+Notifications.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -191,6 +199,10 @@
 				A1000001000000000000F017 /* RemoteDialPolicy.swift */,
 				A1000001000000000000F01E /* GoodbyePolicy.swift */,
 				A1000001000000000000F016 /* SavedMacs.swift */,
+				05DA68AD70DA545DECECB054 /* BackgroundSessionIntent.swift */,
+				D6416A92AD3B0C47DAC54C37 /* NotificationInbox.swift */,
+				323A4CB635E5C7D74E45989E /* NotificationInboxView.swift */,
+				1369CD33C82372F9C53328D2 /* StreamClient+Notifications.swift */,
 				A1000001000000000000FF03 /* SavedMacStore.swift */,
 				A1000001000000000000F01D /* DeviceIdentity.swift */,
 				A1000001000000000000F040 /* MacMenuState.swift */,
@@ -350,6 +362,10 @@
 				A1000001000000000000A017 /* RemoteDialPolicy.swift in Sources */,
 				A1000001000000000000A01E /* GoodbyePolicy.swift in Sources */,
 				A1000001000000000000A016 /* SavedMacs.swift in Sources */,
+				5B10D492CCC187CE4F4B5764 /* BackgroundSessionIntent.swift in Sources */,
+				B4B903B2E1406FFDDA3DEFA6 /* NotificationInbox.swift in Sources */,
+				53DC718A6CE21E6409F1E35B /* NotificationInboxView.swift in Sources */,
+				1B391627F83EED994FB774F5 /* StreamClient+Notifications.swift in Sources */,
 				A1000001000000000000AF03 /* SavedMacStore.swift in Sources */,
 				A1000001000000000000A01D /* DeviceIdentity.swift in Sources */,
 				A1000001000000000000A040 /* MacMenuState.swift in Sources */,
@@ -398,7 +414,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = 9B2KKVM937;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -463,7 +479,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = 9B2KKVM937;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -492,12 +508,15 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_ENTITLEMENTS = Sill.entitlements;
 				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_ASSET_PATHS = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Info-Debug.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Sill;
+				SILL_APNS_ENVIRONMENT = sandbox;
+				SILL_APNS_ENTITLEMENT = development;
+				INFOPLIST_KEY_CFBundleDisplayName = "Sill Development";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -509,7 +528,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.5.1;
-				PRODUCT_BUNDLE_IDENTIFIER = me.saffer.sill;
+				PRODUCT_BUNDLE_IDENTIFIER = local.sill.fork.ios.debug;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = minimal;
@@ -524,11 +543,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_ENTITLEMENTS = Sill.entitlements;
 				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_ASSET_PATHS = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
+				SILL_APNS_ENVIRONMENT = production;
+				SILL_APNS_ENTITLEMENT = production;
 				INFOPLIST_KEY_CFBundleDisplayName = Sill;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -541,7 +563,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.5.1;
-				PRODUCT_BUNDLE_IDENTIFIER = me.saffer.sill;
+				PRODUCT_BUNDLE_IDENTIFIER = local.sill.fork.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = minimal;

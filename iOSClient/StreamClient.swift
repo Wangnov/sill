@@ -190,6 +190,19 @@ final class StreamClient: ObservableObject {
     // inside a network callback; this window's discovery and session state stays on this client.
     let savedMacStore: SavedMacStore
     private var savedMacChanges: AnyCancellable?
+    var notificationRelay: NotificationSessionRelay?
+    // Per-window UI intent outlives a suspended or killed process; the socket never does.
+    private static var resumeRestorationStarted = false
+    private var resumeSceneID: String?
+    private var backgroundResumeIntent: BackgroundSessionIntent?
+    private var restoreSourceOnNextList = false
+    private var resumeAttempted = false
+    private var sceneBackgrounded = false
+    var sceneAllowsAutomaticReconnect: Bool { !sceneBackgrounded }
+    private var hostMediaSubscription = false
+    private var mediaResumePending = false
+    private var latestWindowList: WindowList?
+    private var pauseTask: UIBackgroundTaskIdentifier = .invalid
     var savedMacs: [SavedMac] { savedMacStore.snapshot.macs }
     var macGroups: [String: String] { savedMacStore.snapshot.groups }
     /// Last-stream preview pictures for saved Macs (ConnectionList), stored in Caches/SillPreviews: those
@@ -943,6 +956,12 @@ final class StreamClient: ObservableObject {
     private let link = SessionLink()
     let queue = DispatchQueue(label: "sill.net", qos: .userInteractive)
     private var lastParameterSets: ParameterSets?
+    // Network-queue counterparts: no decoding, measurement or input after the pause fence.
+    private var mediaPausedOnQueue = false
+    private var heldBackgroundInputs = BackgroundHeldInputs()
+    private var resumeMediaSupportedOnQueue = false
+    private var mediaResumeFence: Data?
+    private var mediaResumeFenceWork: DispatchWorkItem?
     /// The session's last keyframe with the parameter sets it came with (the Mac sends them before
     /// every keyframe): a saved Mac's tile picture, decoded when the session ends (KeyframePicture),
     /// since no snapshot of the screen can take the display layer's video on a device. One frame,
@@ -1023,7 +1042,7 @@ final class StreamClient: ObservableObject {
             self?.cameForward()
         }
         NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.appInForeground = false
+            self?.pauseSceneSession()
         }
         // The clipboard's chip looks when Sill becomes active (StreamClient+Clipboard).
         observeClipboardActivation()
@@ -1084,6 +1103,7 @@ final class StreamClient: ObservableObject {
     /// Whether the picture can be shown now: its window's scene is in the foreground and active, or,
     /// while it is in no window, Sill is active. Main thread.
     private var pictureActive: Bool {
+        guard !sceneBackgrounded else { return false }
         if let scene = displayView.window?.windowScene { return scene.activationState == .foregroundActive }
         return UIApplication.shared.applicationState == .active
     }
@@ -1220,6 +1240,7 @@ final class StreamClient: ObservableObject {
     /// the person is back, so a listed row is dialled at once. Only after the app was seen going to the
     /// background. Main thread.
     private func cameForward() {
+        guard !sceneBackgrounded else { return }
         let wasInBackground = !appInForeground
         appInForeground = true
         guard browsing, wasInBackground else { return }
@@ -1352,6 +1373,7 @@ final class StreamClient: ObservableObject {
     /// 3 s mark). Main thread.
     func discoveryChanged() {
         recomputeMacs()
+        guard !sceneBackgrounded else { return }
         updateDiscovery()
         reconnectIfListed()
         moveToNetworkIfListed()
@@ -1599,6 +1621,7 @@ final class StreamClient: ObservableObject {
     /// the saved Mac's addresses through the remote door. At home the row's door decides the rest
     /// (`dial`): a pinned session, the ask, a session on an open door, a plain one, or nothing.
     func connect(to mac: FoundMac) {
+        clearBackgroundResume()
         #if DEBUG
         if mockDiscovery {
             switch mac.route {
@@ -2022,7 +2045,7 @@ final class StreamClient: ObservableObject {
     private func moveToNetworkIfListed() {
         moveCheck?.cancel()
         moveCheck = nil
-        guard connected, connectedDirectly, sessionListed, moving == nil, connection != nil,
+        guard !sceneBackgrounded, !mediaResumePending, connected, connectedDirectly, sessionListed, moving == nil, connection != nil,
               let mac = macs.first(where: { $0.name == hostName && $0.route == .network }) else { return }
         let now = ProcessInfo.processInfo.systemUptime
         let decision = DiscoveryPolicy.moveToNetwork(listedSince: sightings.since[mac.name], lastAttempt: lastMoveAttempt,
@@ -2092,7 +2115,7 @@ final class StreamClient: ObservableObject {
         homeMoveCheck = nil
         // A row no longer listed is forgotten, its refusal and its tries: listed again, it is tried afresh.
         homeMoveRows = homeMoveRows.keeping(listed: Set(macs.filter { $0.route == .network }.map(\.id)))
-        guard connected, let s = session, s.route.isRemote, s.why != .connectRemotely, sessionListed, moving == nil, !sessionDead,
+        guard !sceneBackgrounded, !mediaResumePending, connected, let s = session, s.route.isRemote, s.why != .connectRemotely, sessionListed, moving == nil, !sessionDead,
               connection != nil, homeInfo.latest != nil, let id = s.macID, let saved = savedMac(id) else { return }
         // Every network row whose tag names the session's saved Mac, by row: one not refused, at a door
         // that speaks TLS, dialed pinned to the saved Mac's key, never plain, never an ask (a plain door
@@ -2581,6 +2604,7 @@ final class StreamClient: ObservableObject {
         }
         connectedDirectly = false
         session?.route = .network
+        notificationSessionMoved()
         sessionDead = false
         pathSignals = PathSignals()
         lastPongAt = ProcessInfo.processInfo.systemUptime
@@ -2737,7 +2761,7 @@ final class StreamClient: ObservableObject {
     private func followBestPath() {
         pathCheck?.cancel()
         pathCheck = nil
-        guard connected, connection != nil, sessionListed else { return }
+        guard !sceneBackgrounded, !mediaResumePending, connected, connection != nil, sessionListed else { return }
         let now = ProcessInfo.processInfo.systemUptime
         let input = pathInput(now: now)
         if let move = moving {
@@ -3291,6 +3315,7 @@ final class StreamClient: ObservableObject {
     /// meanwhile the stream screen stays, and a second tap does nothing. A Mac from before kind 44 skips
     /// the ask: its picture is the keyframe kept, 300 ms later.
     func disconnect() {
+        clearBackgroundResume()
         guard freshPictureWait == nil else { return }
         switch freshPictureOnLeaving() {
         case .stored:
@@ -3303,6 +3328,7 @@ final class StreamClient: ObservableObject {
     }
 
     private func finishDisconnect() {
+        clearBackgroundResume()
         freshPictureWait = nil
         reconnect = nil
         cancelRemoteDial()
@@ -3437,11 +3463,18 @@ final class StreamClient: ObservableObject {
         if let released = link.release(c) { fenceEnded(c, released, why: "the direct connection closed") }
         DispatchQueue.main.async {
             guard self.connection === c else { return }   // stale callback from a connection we already replaced
-            // A Disconnect waiting for its keyframe: the person's leave stands, with no reconnect.
+            // The person's explicit Disconnect takes precedence over automatic background resume.
             if self.freshPictureWait != nil { self.finishDisconnect(); return }
-            // A move carries the session on (`rescue`), not when this device closed the connection
-            // itself (`end`: a message no Sill sends): that one ends with the words it deserves.
-            if self.sessionDead || (end == nil && self.rescue(from: c)) { return }
+            if self.sceneBackgrounded, self.goodbye == nil || self.goodbye?.reason == Goodbye.quit {
+                self.closeBackgroundConnection()
+                return
+            }
+            // A host refusal keeps its normal policy and must not resurrect on the next launch.
+            if self.goodbye != nil { self.clearBackgroundResume() }
+            // A failed foreground resume ends its paused session before any new dial. The normal
+            // path rescue keeps media state and would otherwise inherit its unreturned fence.
+            // Outside resume, a move carries the session on unless this device closed it (`end`).
+            if !self.mediaResumePending && (self.sessionDead || (end == nil && self.rescue(from: c))) { return }
             self.endSession(error: error, end: end)
         }
     }
@@ -3473,7 +3506,7 @@ final class StreamClient: ObservableObject {
 
     private func retryReconnect(chain: Int, after seconds: TimeInterval) {
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
-            guard let self, chain == self.reconnectRetryChain, !self.connected, self.reconnect != nil else { return }
+            guard let self, chain == self.reconnectRetryChain, !self.connected, self.reconnect != nil, !self.sceneBackgrounded else { return }
             self.reconnectIfListed()
             self.retryReconnect(chain: chain, after: min(seconds * 2, 10))
         }
@@ -3483,6 +3516,10 @@ final class StreamClient: ObservableObject {
     /// never delivered its window list: the connect screen never left, and its Remote rows must not
     /// vanish for another 3 s. Main thread.
     func tearDown(status: String, restartSearch: Bool = true) {
+        hostMediaSubscription = false
+        mediaResumePending = false
+        latestWindowList = nil
+        notificationSessionEnded()
         abandonMove()
         resetPath()
         lastMoveAttempt = nil
@@ -3508,10 +3545,18 @@ final class StreamClient: ObservableObject {
             }
         }
         // After the picture's keyframe was taken (the block above queued first): nothing of this
-        // session's stream outlives it.
+        // session's stream outlives it. In particular, a failed foreground resume fence must not
+        // leave the next connection paused. Capture the scene on main; later phase transitions
+        // enqueue their own pause/resume after this cleanup on the same network queue.
+        let pauseMedia = sceneBackgrounded
         queue.async {
             self.lastParameterSets = nil; self.lastKeyframe = nil; self.keyframeWanted = nil
             self.pendingMove = nil; self.stopMeasuring()
+            self.heldBackgroundInputs = BackgroundHeldInputs()
+            self.mediaPausedOnQueue = pauseMedia
+            self.resumeMediaSupportedOnQueue = false
+            self.mediaResumeFenceWork?.cancel(); self.mediaResumeFenceWork = nil
+            self.mediaResumeFence = nil
         }
         firstListDeadline?.cancel()
         firstListDeadline = nil
@@ -3584,6 +3629,7 @@ final class StreamClient: ObservableObject {
     /// The person's pick (a thumbnail, Desktop, the Apps list): the host streams this source and
     /// answers with a fresh window list. It counts for the tour as something happening.
     func select(_ source: StreamSource) {
+        restoreSourceOnNextList = false
         noteAction()
         request(source)
     }
@@ -3664,6 +3710,7 @@ final class StreamClient: ObservableObject {
     /// waiting, so the cursor is always where it should be before the button goes down.
     /// Any client → host message. Extensions (viewport, client stats) use this; frames never go this way.
     func send(_ kind: StreamMessageKind, payload: Data) {
+        if sceneBackgrounded, kind == .clientStats || kind == .viewport || kind == .keyframeRequest { return }
         let message = StreamMessage(kind: kind, timestamp: Date().timeIntervalSince1970, isKeyframe: false, payload: payload)
         link.send(message.serialized())
     }
@@ -3681,12 +3728,13 @@ final class StreamClient: ObservableObject {
         if inputPaused { print("tour: INPUT SENT WHILE THE TOUR SHOWED: \(event)") }
         #endif
         queue.async { [weak self] in
-            guard let self else { return }
+            guard let self, !self.mediaPausedOnQueue else { return }
             // Every input hands this device the pointer, coalesced moves included, here where the
             // Mac's reports are judged, so none can slip between an input and its count.
             self.pointerNoteSent(event)
             guard case .pointer(.move, _, _) = event else {
                 self.flushPendingMove()
+                self.heldBackgroundInputs.sent(event)
                 self.send(.input, Wire.encode(event))
                 return
             }
@@ -3695,6 +3743,7 @@ final class StreamClient: ObservableObject {
             if now >= due {
                 self.pendingMove = nil
                 self.lastMoveAt = now
+                self.heldBackgroundInputs.sent(event)
                 self.send(.input, Wire.encode(event))
             } else {
                 self.pendingMove = event   // replaces any older pending move
@@ -3764,6 +3813,7 @@ final class StreamClient: ObservableObject {
         guard let move = pendingMove else { return }
         pendingMove = nil
         lastMoveAt = CACurrentMediaTime()
+        heldBackgroundInputs.sent(move)
         send(.input, Wire.encode(move))
     }
 
@@ -3778,7 +3828,10 @@ final class StreamClient: ObservableObject {
     /// just before as `onCaretMayMove` let go of it, and anything typed a moment earlier reach the Mac
     /// before it moves the caret, where the caret was. Sent straight away, it could overtake them.
     private func sendAfterInput(_ kind: StreamMessageKind, _ payload: Data) {
-        queue.async { [weak self] in self?.send(kind, payload) }
+        queue.async { [weak self] in
+            guard let self, !self.mediaPausedOnQueue else { return }
+            self.send(kind, payload)
+        }
     }
 
     // MARK: - The pointer (docs/pointer-visibility-plan.md §7.3)
@@ -4030,6 +4083,12 @@ final class StreamClient: ObservableObject {
 
     /// On the network queue.
     private func handle(_ header: StreamHeader, _ data: Data) {
+        if mediaPausedOnQueue {
+            switch header.kind {
+            case .parameterSets, .frame, .audio, .thumbnail, .appIcon, .cursorShape: return
+            default: break
+            }
+        }
         switch header.kind {
         case .parameterSets:
             if let ps = ParameterSets(encoded: data) {
@@ -4070,9 +4129,12 @@ final class StreamClient: ObservableObject {
                 if self.hostVersion != list.hostVersion { self.hostVersion = list.hostVersion }
                 if self.hostProtocol != list.protocol { self.hostProtocol = list.protocol }
                 if self.hostGestures != list.gestures { self.hostGestures = list.gestures }
+                self.hostMediaSubscription = (list.mediaSubscription ?? 0) >= 1
+                self.hostNotificationsChanged(list.notificationMirroring)
                 // The clipboard: subscribe (or stop) as the Mac's word and this device's switch say.
                 self.hostClipboardChanged(list.clipboard)
-                if !self.sessionListed {
+                let firstList = !self.sessionListed
+                if firstList {
                     self.sessionListed = true
                     #if DEBUG
                     switch (list.hostVersion, list.protocol) {
@@ -4095,8 +4157,10 @@ final class StreamClient: ObservableObject {
                 }
                 if self.macName != list.macName { self.macName = list.macName; self.loadWindowOrder() }
                 let previous = self.active
+                self.latestWindowList = list
                 self.windows = list.windows
                 self.active = list.active
+                if self.backgroundSessionListed(list, first: firstList) { return }
                 // Forget thumbnails for windows that are gone.
                 let live = Set(list.windows.map(\.id))
                 self.thumbnails = self.thumbnails.filter { live.contains($0.key) }
@@ -4144,7 +4208,8 @@ final class StreamClient: ObservableObject {
                         let choices = self.choicesSent
                         let wait = 2 + Double(self.lastRttMaxMs ?? 0) / 1000
                         DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
-                            guard let self, self.connected, self.active == .none, self.choicesSent == choices,
+                            guard let self, !self.sceneBackgrounded, !self.mediaResumePending,
+                                  self.connected, self.active == .none, self.choicesSent == choices,
                                   !self.windows.contains(where: { $0.id == id }) else { return }
                             self.lastAutoDesktop = Date()
                             self.request(.desktop)
@@ -4161,7 +4226,19 @@ final class StreamClient: ObservableObject {
         case .appIcon:
             guard let (bundleID, png) = ImageBlob.decodeIcon(data),
                   let image = UIImage(data: png) else { return }
-            DispatchQueue.main.async { self.icons[bundleID] = image }
+            let from = connection
+            DispatchQueue.main.async {
+                guard self.connection === from else { return }
+                self.icons[bundleID] = image
+                self.cacheNotificationIcon(image, bundleID: bundleID)
+            }
+        case .mirroredNotification:
+            let from = connection
+            let key = from.flatMap(RemoteTLS.peerFingerprint)
+            DispatchQueue.main.async {
+                guard self.connection === from else { return }
+                self.receiveMirroredNotification(data, connectionKey: key)
+            }
         case .appList:
             guard let apps = Wire.decode([AppInfo].self, from: data) else { return }
             DispatchQueue.main.async { self.apps = apps }
@@ -4182,6 +4259,26 @@ final class StreamClient: ObservableObject {
                 self.receiveSettings(state)
             }
         case .pong:
+            if let fence = mediaResumeFence, data == fence {
+                mediaResumeFence = nil
+                mediaResumeFenceWork?.cancel(); mediaResumeFenceWork = nil
+                mediaPausedOnQueue = false
+                if resumeMediaSupportedOnQueue { send(.mediaSubscription, Wire.encode(MediaSubscription(enabled: true))) }
+                let resumed = connection
+                if let c = resumed { startMeasuring(c, remote: remoteOnQueue) }
+                DispatchQueue.main.async {
+                    guard self.connection === resumed, !self.sceneBackgrounded else { return }
+                    self.mediaResumePending = false
+                    self.resumeDrainedSource()
+                    self.followBestPath()
+                    self.moveToNetworkIfListed()
+                    self.moveHomeIfListed()
+                    self.keyframeRecovery.interrupted(now: ProcessInfo.processInfo.systemUptime)
+                    self.considerKeyframeAsk()
+                }
+                return
+            }
+            if data.count == 24 { return } // an expired resume fence, never an RTT sample
             // A Paste's receipt (StreamClient+Clipboard): its own random payload, not a time.
             if data.count == ClipboardPolicy.receiptLength {
                 DispatchQueue.main.async { self.clipboardReceiptCame(data) }
@@ -4247,6 +4344,7 @@ final class StreamClient: ObservableObject {
     private func startMeasuring(_ c: NWConnection, remote: Bool) {
         guard c === connection else { return }   // replaced while connecting
         stopMeasuring()
+        guard !mediaPausedOnQueue else { return }
         windowOpenedAt = CACurrentMediaTime()
         lastReceivedAt = windowOpenedAt
         worstRecentRttMs = nil
@@ -4351,6 +4449,7 @@ final class StreamClient: ObservableObject {
     /// On `queue`. Stamped with the monotonic clock: a wall-clock correction between a ping and its
     /// pong would otherwise land in the round trip.
     private func sendPing(on c: NWConnection) {
+        guard !mediaPausedOnQueue else { return }
         // A connection already closed sends nothing, and is not declared lost again at each ping:
         // while a move carries its session on (`rescue`) it stays the session's until the move
         // takes over or ends, and its liveness would otherwise report it lost four times a second.
@@ -4851,5 +4950,218 @@ private extension Data {
         var v: UInt64 = 0
         _ = Swift.withUnsafeMutableBytes(of: &v) { copyBytes(to: $0, from: startIndex..<(startIndex + 8)) }
         return UInt64(bigEndian: v)
+    }
+}
+
+// MARK: - A scene leaving and returning
+
+extension StreamClient {
+    /// A scene may leave while another Sill window is active. Keep its media and resume intent
+    /// separate; .inactive alone (Control Center, an interruption) is not a background departure.
+    func sceneSessionChanged(id: String, background: Bool, active: Bool) {
+        if resumeSceneID == nil {
+            resumeSceneID = id
+            let firstScene = !Self.resumeRestorationStarted
+            Self.resumeRestorationStarted = true
+            backgroundResumeIntent = BackgroundSessionPersistence.load(scene: id, recoveringSingleScene: firstScene)
+        }
+        sound.setSceneForeground(!background)
+        if background {
+            pauseSceneSession()
+        } else if active {
+            sceneBackgrounded = false
+            if browsing, !resumeAttempted {
+                resumeAttempted = true
+                resumeSceneSession()
+            }
+            cameForward()
+        }
+    }
+
+    private func rememberBackgroundResume() {
+        guard freshPictureWait == nil, let scene = resumeSceneID, let id = session?.macID ?? reconnect?.macID,
+              let saved = savedMac(id), saved.revoked != true, saved.newKey != true else { return }
+        let previous = backgroundResumeIntent.flatMap { $0.macID == id ? $0 : nil }
+        let source = active == .none ? (previous?.source ?? .none) : active
+        let intent = BackgroundSessionIntent(macID: id, source: source, launchID: sessionHost ?? previous?.launchID)
+        backgroundResumeIntent = intent
+        BackgroundSessionPersistence.save(intent, scene: scene)
+    }
+
+    private func clearBackgroundResume() {
+        backgroundResumeIntent = nil
+        restoreSourceOnNextList = false
+        if let scene = resumeSceneID { BackgroundSessionPersistence.save(nil, scene: scene) }
+    }
+
+    private func pauseSceneSession() {
+        guard !sceneBackgrounded else { return }
+        sceneBackgrounded = true
+        appInForeground = false
+        resumeAttempted = false
+        mediaResumePending = false
+        guard browsing else { return } // mock clients never own a network session to suspend
+        rememberBackgroundResume()
+        // Pausing is not a failed dial. A long suspension must not spend the reconnect window.
+        reconnect = nil
+        reconnectRetryChain += 1
+        reconnectCheck?.cancel(); reconnectCheck = nil
+        cancelRemoteDial()
+        keyframeAskWork?.cancel(); keyframeAskWork = nil
+        keyframeRecovery.leftForeground()
+        pathCheck?.cancel(); pathCheck = nil
+        discoveryRecheck?.cancel(); discoveryRecheck = nil
+        onCaretMayMove?()     // commit anything composed before releasing the forwarded keys
+        let c = connection
+        let keepConnection = connected && hostMediaSubscription && moving == nil
+        // Finish any hand-over ownership before the release/pause sequence. Pending old input
+        // belongs to that hand-over; closing its old connection releases it on the host as well.
+        abandonMove()
+        if c != nil {
+            endPauseTask()
+            pauseTask = UIApplication.shared.beginBackgroundTask(withName: "Pause Sill media") { [weak self] in
+                self?.closeBackgroundConnection()
+            }
+        }
+        let task = pauseTask
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.pendingMove = nil
+            for event in self.heldBackgroundInputs.release() { self.send(.input, Wire.encode(event)) }
+            self.mediaPausedOnQueue = true
+            self.mediaResumeFenceWork?.cancel(); self.mediaResumeFenceWork = nil
+            self.mediaResumeFence = nil
+            self.stopMeasuring()
+            self.displayView.clear()
+            guard let c, self.connection === c, keepConnection else {
+                DispatchQueue.main.async {
+                    guard self.connection === c, self.pauseTask == task else { return }
+                    self.closeBackgroundConnection()
+                }
+                return
+            }
+            // An ordered, finite exchange only. This task is ended as soon as Network accepts the
+            // control, and its expiration closes the socket. It never grants indefinite runtime.
+            let message = StreamMessage(kind: .mediaSubscription, timestamp: Date().timeIntervalSince1970,
+                                        isKeyframe: false, payload: Wire.encode(MediaSubscription(enabled: false)))
+            c.send(content: message.serialized(), completion: .contentProcessed { error in
+                DispatchQueue.main.async {
+                    guard self.pauseTask == task else { return }
+                    if error != nil { self.closeBackgroundConnection() }
+                    self.endPauseTask()
+                }
+            })
+        }
+        #if DEBUG
+        print("lifecycle: background; media paused; socket \(keepConnection ? "best effort" : "will close")")
+        #endif
+    }
+
+    /// Old hosts cannot stop one client's media, and a new host may reap a paused socket. Both
+    /// are expected departures: retain only the paired resume intent, with no background retries.
+    private func closeBackgroundConnection() {
+        guard sceneBackgrounded else { endPauseTask(); return }
+        guard let c = connection else { endPauseTask(); return }
+        connection = nil
+        c.cancel()
+        reconnect = nil
+        cancelRemoteDial()
+        tearDown(status: Self.lookingOnNetwork, restartSearch: false)
+        setStatus(Self.lookingOnNetwork, kind: .searchingNetwork)
+        endPauseTask()
+    }
+
+    private func endPauseTask() {
+        guard pauseTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(pauseTask)
+        pauseTask = .invalid
+    }
+
+    private func resumeSceneSession() {
+        endPauseTask()
+        resetLiveness()
+        restoreSourceOnNextList = backgroundResumeIntent != nil
+        let c = connection
+        let canResume = connected && c?.state == .ready
+        mediaResumePending = canResume
+        let remote = session?.route.isRemote == true
+        let mediaSupported = hostMediaSubscription
+        if let c, connected, !canResume {
+            // A suspended connection can still be waiting for a vanished path. Its stopped ping
+            // timer cannot declare it lost; start a fresh dial instead of waiting indefinitely.
+            connection = nil
+            c.cancel()
+            tearDown(status: Self.lookingOnNetwork, restartSearch: false)
+        }
+        queue.async { [weak self] in
+            guard let self else { return }
+            if canResume, let c, self.connection === c {
+                // Drain the old TCP media first. A pong follows everything the host queued before
+                // this ping; only then do we ask it to produce fresh media. No clock sync needed.
+                self.mediaPausedOnQueue = true
+                self.remoteOnQueue = remote
+                self.resumeMediaSupportedOnQueue = mediaSupported
+                let nonce = Data((0..<24).map { _ in UInt8.random(in: .min ... .max) })
+                self.mediaResumeFence = nonce
+                self.send(.ping, nonce)
+                let work = DispatchWorkItem { [weak self, weak c] in
+                    guard let self, let c, self.connection === c, self.mediaResumeFence == nonce else { return }
+                    self.connectionLost(c)
+                    c.cancel()
+                }
+                self.mediaResumeFenceWork?.cancel()
+                self.mediaResumeFenceWork = work
+                self.queue.asyncAfter(deadline: .now() + Self.livenessFloor, execute: work)
+            } else {
+                self.mediaPausedOnQueue = false
+            }
+        }
+        if canResume {
+            #if DEBUG
+            print("lifecycle: foreground; checking the retained connection before resubscribing")
+            #endif
+            return
+        }
+        // An ordinary launch or an already-running dial has nothing paused to restore.
+        guard connection == nil, let intent = backgroundResumeIntent else { return }
+        guard let saved = savedMac(intent.macID), saved.fingerprintData != nil,
+              saved.revoked != true, saved.newKey != true else { clearBackgroundResume(); return }
+        let bonjour = saved.bonjourName
+        reconnect = Reconnect(macID: saved.macID, bonjourName: bonjour, name: displayName(saved.macID),
+                              lostAt: ProcessInfo.processInfo.systemUptime, pathAtLoss: pathSignature,
+                              remoteAllowed: true,
+                              rememberedDirect: bonjour.map { directWirelessMacs.contains($0) } ?? false)
+        scheduleReconnectRetry()
+        reconnectIfListed()
+        #if DEBUG
+        print("lifecycle: foreground; reconnecting the saved session with a fresh retry budget")
+        #endif
+    }
+
+    /// A fresh connection may restore a source only if no viewer is currently streaming one. The
+    /// host's current source always wins, including a choice made by another device while away.
+    private func backgroundSessionListed(_ list: WindowList, first: Bool) -> Bool {
+        if sceneBackgrounded || mediaResumePending { return true }
+        guard first, restoreSourceOnNextList, let intent = backgroundResumeIntent else { return false }
+        restoreSourceOnNextList = false
+        guard session?.macID == intent.macID else { clearBackgroundResume(); return false }
+        guard let source = intent.sourceToRestore(hostLaunchID: list.launchID, active: list.active,
+                                                 windows: list.windows) else { return false }
+        request(source)
+        return true
+    }
+
+    /// A retained socket may deliver old idle catalogs before a newer viewer's pick. While the
+    /// fence drains them we only keep the latest snapshot; after its pong, choose at most once.
+    /// The host need not send another catalog when media is enabled again.
+    private func resumeDrainedSource() {
+        guard let list = latestWindowList else { return }
+        if backgroundSessionListed(list, first: true) { return }
+        guard list.active == .none, !Self.noAutoDesktop else { return }
+        if DiscoveryPolicy.autoDesktop(watched: .nothing,
+                                       sinceLastAuto: Date().timeIntervalSince(lastAutoDesktop)) == .ask {
+            lastAutoDesktop = Date()
+            request(.desktop)
+        }
     }
 }

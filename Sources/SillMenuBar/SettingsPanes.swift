@@ -147,6 +147,10 @@ private struct GeneralPane: View {
             ClipboardSection(shareClipboard: $settings.config.shareClipboard,
                              access: previewClipboardAccess ?? model.permissions.clipboardAccess,
                              allow: { model.permissions.allowClipboard() })
+            if let coordinator = model.coordinator {
+                NotificationMirroringSection(mirror: coordinator.notificationMirror,
+                                             allowAccessibility: { model.permissions.requestAccessibility() })
+            }
             if let preview = previewUpdates {
                 UpdatesSection(pane: preview, automatic: .constant(true))
             } else {
@@ -404,6 +408,25 @@ private struct PermissionsPane: View {
         let network = model.coordinator?.status.snapshot.network
         Form {
             Section {
+                HStack(alignment: .top, spacing: 12) {
+                    // Use the owning app's icon, so installed and development bundles carry their
+                    // own identity here without adding a second asset or permission lifecycle.
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 48, height: 48)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Set up Sill on this Mac")
+                            .font(.title3.weight(.semibold))
+                        Text("See the windows you choose on iPhone or iPad, then click, scroll, and type from your device.")
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            Section {
                 PermissionRow(title: String(localized: "Screen Recording"), allowed: permissions.screenRecording,
                               // Not "on this network": a device connected over Direct Wireless shares none.
                               explanation: String(localized: "Lets Sill capture the windows you pick on your iPhone or iPad, and their sound when Send Audio is on. Nothing is recorded or saved; frames and sound go straight to your devices."),
@@ -438,6 +461,8 @@ private struct PermissionsPane: View {
             if permissions.allGranted {
                 Section {
                     Label("You’re all set. Open Sill on your iPhone or iPad.", systemImage: "checkmark.seal.fill")
+                    Button("Pair iPhone or iPad…") { model.pairDevice() }
+                        .disabled(!model.presentation.canPair)
                 }
             }
         }

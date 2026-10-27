@@ -91,6 +91,12 @@ public enum StreamMessageKind: UInt8 {
                              // From the device once per interruption while its keyframe is due, again when it
                              // has not come in 4 s (or four round trips), 2 s apart at least (KeyframeRecovery);
                              // at most one a second per connection on the host
+    // Per-connection media delivery. Older hosts skip this kind; only send it when the window list
+    // advertises mediaSubscription. Control messages and the selected source remain available.
+    case mediaSubscription = 200 // device → host: JSON MediaSubscription, pause or resume media
+    // Fork-only extensions use 200–202; upstream reserves lower numbers for other features.
+    case notificationSubscription = 201 // device → host: NotificationSubscription, paired TLS only
+    case mirroredNotification = 202     // host → device: MirroredNotification, explicitly subscribed
     case unknown = 255       // never sent: what parseHeader yields for a kind this build does not know
 }
 

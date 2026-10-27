@@ -1,8 +1,8 @@
 import UIKit
 
-/// The app delegate SwiftUI gives `SillApp` (`@UIApplicationDelegateAdaptor`): it implements nothing
-/// but `buildMenu(with:)`, which SwiftUI's own delegate calls for each build of a menu system, to put
-/// the Mac's menus in the iPad's menu bar (docs/menu-bar-plan.md §7.4). SwiftUI keeps its own handling
+/// The app delegate SwiftUI gives `SillApp` (`@UIApplicationDelegateAdaptor`): notification delivery
+/// belongs to the App even without a scene, and `buildMenu(with:)` puts the Mac's menus in the
+/// iPad's menu bar (docs/menu-bar-plan.md §7.4). SwiftUI keeps its own handling
 /// of scenes and of `sill://` links (ContentView's `onOpenURL`).
 ///
 /// Nothing is inserted on an iPhone, before iPadOS 26 (there the main menu only feeds the ⌘ list of
@@ -10,6 +10,22 @@ import UIKit
 /// nothing says which window's session the bar's choices would reach), or when the window's session
 /// has no menus.
 final class SillAppDelegate: UIResponder, UIApplicationDelegate {
+    /// One inbox and system delegate for all windows, retained before a cold-start push is handled.
+    let notificationInbox = NotificationInbox()
+
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        notificationInbox.install()
+        return true
+    }
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        notificationInbox.registeredForPush(deviceToken)
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        notificationInbox.failedToRegisterForPush(error)
+    }
+
     override func buildMenu(with builder: UIMenuBuilder) {
         super.buildMenu(with: builder)
         guard builder.system == .main else { return }

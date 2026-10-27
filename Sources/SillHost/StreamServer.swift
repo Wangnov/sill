@@ -60,6 +60,11 @@ final class StreamServer {
         var oldestUnackedFrameAt: TimeInterval?   // last time a frame was drained, or queued from 0 (dead-peer detection)
         /// When it was admitted (registered), which is when the dead-peer grace starts.
         var connectedAt = Date().timeIntervalSince1970
+        // Older clients never send kind 200 and continue receiving media as before.
+        var mediaEnabled = true
+        /// Monotonic start of the pause and bytes of control messages still handed to the socket.
+        var pausedAt: TimeInterval?
+        var pausedControlBytes = 0
         var needsKeyframe = true
         var lastStatsPrint = 0.0  // CFAbsoluteTime of the last clientStats line, to rate-limit the log
         /// The worst frame age and rtt reported since that line, -1 for none. The next line prints
@@ -161,6 +166,14 @@ final class StreamServer {
     var onKeyframeNeeded: (() -> Void)?
     /// Number of connected clients changed. Called on the network queue. Zero means the host can idle.
     var onClientCountChanged: ((Int) -> Void)?
+    /// A snapshot of viewers and, on a subscription change, the connection and its new state.
+    /// Called on the network queue, so the coordinator sees registrations and changes in order.
+    var onMediaViewersChanged: ((Set<ObjectIdentifier>, NWConnection?, Bool) -> Void)?
+    private var mediaViewerIDs: Set<ObjectIdentifier> {
+        Set(clients.compactMap { $0.value.mediaEnabled ? $0.key : nil })
+    }
+    /// A paused device returned to the foreground; the coordinator wakes a sleeping display.
+    var onMediaResumed: ((NWConnection) -> Void)?
     /// One connection ended (before `onClientCountChanged`), for per-client state such as its rate.
     var onClientDisconnected: ((NWConnection) -> Void)?
     /// The listener failed. Called on the network queue after "Listener failed: …" is printed.
@@ -237,7 +250,7 @@ final class StreamServer {
 
     /// On the network queue.
     private func updateTicking() {
-        let wanted = !clients.isEmpty && (streaming || Date().timeIntervalSince1970 - lastInputAt < Self.inputRecency)
+        let wanted = clients.values.contains { $0.mediaEnabled } && (streaming || Date().timeIntervalSince1970 - lastInputAt < Self.inputRecency)
         if wanted, tickTimer == nil {
             let t = DispatchSource.makeTimerSource(queue: queue)
             t.schedule(deadline: .now(), repeating: Self.tickInterval, leeway: .milliseconds(5))
@@ -253,12 +266,12 @@ final class StreamServer {
     /// On the network queue. Re-evaluates the recency rule so the timer stops itself after a quiet spell.
     private func tick() {
         let live = streaming || Date().timeIntervalSince1970 - lastInputAt < Self.inputRecency
-        guard live, !clients.isEmpty else { updateTicking(); return }
+        guard live, clients.values.contains(where: { $0.mediaEnabled }) else { updateTicking(); return }
         let now = Date().timeIntervalSince1970
         // The Mac's pointer, unless the frame-rate sampler has it while it moves.
         let reported = pointerSampler == nil ? samplePointer(now: now) : []
         let data = StreamMessage(kind: .tick, timestamp: now, isKeyframe: false, payload: Data()).serialized()
-        for (id, client) in clients where client.connection.state == .ready {
+        for (id, client) in clients where client.mediaEnabled && client.connection.state == .ready {
             // A kind 26 just sent keeps its link awake this turn.
             if reported.contains(id) { continue }
             // Over TLS every record costs CPU (the remote plan's H20): skip a tick right after
@@ -289,14 +302,14 @@ final class StreamServer {
     /// (PointerWatch.samplerInterval). Returns the devices sent one.
     @discardableResult
     private func samplePointer(now: TimeInterval) -> Set<ObjectIdentifier> {
-        let ready = clients.compactMap { $0.value.connection.state == .ready ? $0.key : nil }
+        let ready = clients.compactMap { $0.value.mediaEnabled && $0.value.connection.state == .ready ? $0.key : nil }
         guard let watch = pointerWatch, let reading = watch.sample(devices: ready) else {
             setPointerSampler(interval: nil)
             return []
         }
         var sent = Set<ObjectIdentifier>()
         var watched = false
-        for (id, client) in clients where client.connection.state == .ready {
+        for (id, client) in clients where client.mediaEnabled && client.connection.state == .ready {
             guard let report = reading.report(for: id, seen: client.inputsRead) else {
                 client.lastPointer = nil
                 continue
@@ -989,6 +1002,7 @@ final class StreamServer {
         client.lastHeardAt = client.connectedAt
         clients[ObjectIdentifier(client.connection)] = client
         onClientCountChanged?(clients.count)
+        onMediaViewersChanged?(mediaViewerIDs, nil, false)
         updateTicking()
         updateSweep()
     }
@@ -1262,6 +1276,10 @@ final class StreamServer {
     static let remoteSilence: TimeInterval = 8
     static let remoteDeadAfter: TimeInterval = 15
     static let remoteGrace: TimeInterval = 15
+    /// A suspended app may never read or close its socket. It reconnects on return after this grace.
+    static let pausedConnectionGrace: TimeInterval = 90
+    /// Control messages still sent while paused must not grow without bound behind an unread socket.
+    static let pausedControlByteLimit = 8 << 20
 
     /// On `queue`: a 1 s sweep while any client exists.
     private func updateSweep() {
@@ -1284,6 +1302,14 @@ final class StreamServer {
         lastSweepAt = now
         var waiting: [Client] = []
         for client in clients.values {
+            if !client.mediaEnabled {
+                if let pausedAt = client.pausedAt,
+                   ProcessInfo.processInfo.systemUptime - pausedAt >= Self.pausedConnectionGrace {
+                    print("Paused client expired after \(Int(Self.pausedConnectionGrace)) s: \(client.connection.endpoint)")
+                    client.connection.cancel()
+                }
+                continue
+            }
             let second = LinkJudge.Second(sent: client.sentThisSecond, withheld: client.withheldThisSecond, taken: client.takenThisSecond,
                                           waiting: client.pendingBytes, heard: client.lastHeardAt > since)
             client.sentThisSecond = 0
@@ -1321,9 +1347,39 @@ final class StreamServer {
         print("Client left: \(client.connection.endpoint)")
         onClientDisconnected?(client.connection)
         onClientCountChanged?(clients.count)
+        onMediaViewersChanged?(mediaViewerIDs, nil, false)
         updateTicking()
         updateSweep()
         if client.audioCodec != nil { updateAudioListeners() }
+    }
+
+    /// On the network queue: stop adding media for this connection. NWConnection already owns
+    /// any sends handed to it, so those bytes must drain; dropping them would break framing.
+    private func setMediaEnabled(_ enabled: Bool, for client: Client) {
+        guard clients[ObjectIdentifier(client.connection)] === client, client.mediaEnabled != enabled else { return }
+        client.mediaEnabled = enabled
+        client.pausedAt = enabled ? nil : ProcessInfo.processInfo.systemUptime
+        client.needsKeyframe = true
+        client.awaitingFirstKeyframe = true
+        client.keyframeWanted = false
+        client.audioEpochSent = nil
+        client.lastPointer = nil
+        client.sentThisSecond = 0
+        client.withheldThisSecond = 0
+        client.takenThisSecond = 0
+        if let verdict = client.judge.reset() { onClientLinkChanged?(client.connection, verdict) }
+        if enabled {
+            // A suspended device may not have pinged; resume gets a fresh silence/drain grace.
+            let now = Date().timeIntervalSince1970
+            client.lastHeardAt = now
+            client.connectedAt = now
+            if client.inflightFrames > 0 { client.oldestUnackedFrameAt = now }
+            onMediaResumed?(client.connection)
+            onKeyframeNeeded?()
+        }
+        updateAudioListeners()
+        updateTicking()
+        onMediaViewersChanged?(mediaViewerIDs, client.connection, enabled)
     }
 
     /// The source is changing: forget the old parameter sets and make every client wait for
@@ -1399,6 +1455,9 @@ final class StreamServer {
                 return
             }
             let deliver = { (payload: Data) in
+                // After pausing the host releases this device's held keys. Do not let later input
+                // from that connection press them again until it explicitly resumes.
+                if header.kind == .input && !client.mediaEnabled { self.receiveLoop(client); return }
                 if header.kind == .input {
                     self.lastInputAt = Date().timeIntervalSince1970
                     if self.tickTimer == nil { self.updateTicking() }
@@ -1408,7 +1467,11 @@ final class StreamServer {
                     client.inputsRead += 1
                     self.pointerWatch?.inputArrived(from: ObjectIdentifier(c), movesPointer: PointerControl.movesPointer(payload: payload))
                 }
-                if header.kind == .ping {
+                if header.kind == .mediaSubscription {
+                    if let subscription = Wire.decode(MediaSubscription.self, from: payload) {
+                        self.setMediaEnabled(subscription.enabled, for: client)
+                    }
+                } else if header.kind == .ping {
                     // Echo straight back from the network queue: the round trip should measure the
                     // network and nothing else.
                     self.send(StreamMessage(kind: .pong, timestamp: header.timestamp, isKeyframe: false, payload: payload).serialized(), to: client)
@@ -1490,6 +1553,7 @@ final class StreamServer {
             var wantKeyframe = false
             defer { if wantKeyframe { onKeyframeNeeded?() } }
             for client in clients.values where client.connection.state == .ready {
+                if !client.mediaEnabled && (message.kind == .frame || message.kind == .parameterSets || message.kind == .thumbnail) { continue }
                 if message.kind == .frame, client.route.isRemote {
                     if paceRemote(client, message: message, data: data) { wantKeyframe = true }
                     continue
@@ -1549,7 +1613,7 @@ final class StreamServer {
 
     /// On `queue`: the count of devices that play the sound, reported when it changed.
     private func updateAudioListeners() {
-        let n = clients.values.filter { $0.audioCodec == AudioCodec.aacELD }.count
+        let n = clients.values.filter { $0.mediaEnabled && $0.audioCodec == AudioCodec.aacELD }.count
         guard n != audioListeners else { return }
         audioListeners = n
         onAudioListenersChanged?(n)
@@ -1566,7 +1630,7 @@ final class StreamServer {
     /// has `audioCap` messages untaken. Thread-safe.
     func broadcastAudio(packets: Data, epoch: Int) {
         queue.async { [self] in
-            for client in clients.values where client.audioCodec == AudioCodec.aacELD && client.connection.state == .ready {
+            for client in clients.values where client.mediaEnabled && client.audioCodec == AudioCodec.aacELD && client.connection.state == .ready {
                 if client.audioEpochSent != epoch {
                     guard let format = audioFormat, format.epoch == epoch else { continue }
                     sendAudio(format.data, to: client)
@@ -1696,7 +1760,7 @@ final class StreamServer {
     /// hitch (the trackpad stutter's cause 2); it only brings one forward when frames come slower
     /// than the stream's rate. The remote device waits longer after a drop in exchange. On `queue`.
     private func remoteKeyframeDue(_ now: TimeInterval) -> Bool {
-        guard clients.values.contains(where: { !$0.route.isRemote }) else {
+        guard clients.values.contains(where: { $0.mediaEnabled && !$0.route.isRemote }) else {
             return now - lastRemoteKeyframeRequest >= Self.remoteKeyframeSpacing
         }
         return now - lastRemoteKeyframeRequest >= Self.remoteKeyframeSpacingBesideHome
@@ -1711,6 +1775,15 @@ final class StreamServer {
     private static let graceAfterConnect: TimeInterval = 8.0
 
     private func send(_ data: Data, to client: Client, isFrame: Bool = false, isKeyframe: Bool = false) {
+        // The paused client keeps control traffic, but an app suspended without reading must not
+        // accumulate unlimited catalogs or clipboard messages during its grace period.
+        let pausedControl = !client.mediaEnabled
+        if pausedControl && client.pausedControlBytes + data.count > Self.pausedControlByteLimit {
+            print("Paused client control backlog exceeded limit: \(client.connection.endpoint)")
+            client.connection.cancel()
+            return
+        }
+        if pausedControl { client.pausedControlBytes += data.count }
         let now = Date().timeIntervalSince1970
         let remote = client.route.isRemote
         if isFrame, let oldest = client.oldestUnackedFrameAt,
@@ -1739,6 +1812,7 @@ final class StreamServer {
         client.connection.send(content: data, completion: .contentProcessed { [weak client] _ in
             guard let client else { return }
             client.inflight -= 1
+            if pausedControl { client.pausedControlBytes -= data.count }
             client.pendingBytes -= data.count
             client.takenThisSecond += data.count
             if remote {

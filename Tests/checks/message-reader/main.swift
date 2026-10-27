@@ -212,7 +212,11 @@ func random() {
         sizes.append(u < 0.65 ? r.int(0...1024) : u < 0.90 ? r.int(1025...65536) : u < 0.98 ? r.int(65537...1 << 20) : r.int((1 << 20) + 1...3 << 20))
     }
     for i in stride(from: 5, to: count, by: 97) { sizes[i] = 0 }   // empty payloads (an empty window list)
-    let kinds: [StreamMessageKind] = [.frame, .windowList, .thumbnail, .appIcon, .pong, .unknown]
+    let kinds: [StreamMessageKind] = [.frame, .windowList, .thumbnail, .appIcon, .pong,
+                                    .mediaSubscription, .notificationSubscription, .mirroredNotification, .unknown]
+    // 200–202 are now fork messages. Keep the unknown fixture outside that allocation.
+    let unknownKind: UInt8 = 254
+    precondition(StreamMessageKind(rawValue: unknownKind) == nil)
     var chosen: [StreamMessageKind] = []
     for _ in 0..<count { chosen.append(kinds[r.int(0...kinds.count - 1)]) }
     // Unknown kinds must be read and delivered like any other (the reader never judges a kind).
@@ -225,9 +229,9 @@ func random() {
     var pending = Data()
     func next() {
         while pending.count < 300_000, index < count {
-            // StreamMessage has no .unknown to send: an unknown kind is a raw kind byte of 200.
+            // Exercise an unrecognized raw byte rather than serializing the parser's sentinel.
             var m = message(index, chosen[index] == .unknown ? .frame : chosen[index], sizes[index])
-            if chosen[index] == .unknown { m[m.startIndex] = 200 }
+            if chosen[index] == .unknown { m[m.startIndex] = unknownKind }
             pending.append(m)
             index += 1
         }

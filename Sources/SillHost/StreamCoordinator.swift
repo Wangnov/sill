@@ -173,6 +173,10 @@ package final class StreamCoordinator {
     private var rectCache: (id: CGWindowID, rect: CGRect, at: CFAbsoluteTime)?
     private var pendingLaunch: String?
     private var switching = false
+    /// Active media viewers are counted on the network queue, separately from connected clients.
+    /// A paused stream keeps its source and staged window, so a returning viewer can resume it.
+    private var mediaViewers: Set<ObjectIdentifier> = []
+    private var mediaPaused = false
     /// A restart of the active source is in flight (a settings change, a resize, a rate change,
     /// the encoder fallback, a lost display): the source being restarted. Nil during a switch to
     /// another source.
@@ -262,6 +266,8 @@ package final class StreamCoordinator {
         var route: ClientRoute?
         // Only connections whose catalog went out join settings publishes.
         var connection: NWConnection?
+        // Separate from media: a suspended viewer can still be registered for APNs delivery.
+        var notificationsSubscribed = false
         // Answers do not change the last published state.
         var lastPublished: HostSettingsState?
         // A report carries the bitrate at judgment; settings omit it when the target has changed.
@@ -297,6 +303,7 @@ package final class StreamCoordinator {
     /// the menus do, so the picture always starts first, and nothing of it waits on the picture or the
     /// other way round.
     let audio = AudioPipeline()
+    package let notificationMirror = NotificationMirror()
     /// Connected devices that play the sound (the server's count, from their hellos).
     private var audioListeners = 0
     /// TEST ONLY. `SILL_TEST_MENU_PID=<pid>` on a --synthetic host: the test pattern's menus are that
@@ -401,8 +408,46 @@ package final class StreamCoordinator {
         audio.onFormat = { data, epoch in server.broadcastAudio(format: data, epoch: epoch) }
         audio.onPackets = { data, epoch in server.broadcastAudio(packets: data, epoch: epoch) }
         audio.onStatus = { [weak self] _ in self?.showAudio() }
+        if let remote, let identity = remote.identity {
+            notificationMirror.start(macID: identity.macID,
+                                     isPaired: { [weak remote] in remote?.isPaired($0) == true },
+                                     onNotification: { [weak self] in self?.sendNotification($0) })
+        }
+        server.onMediaResumed = { [weak self] connection in
+            // A foreground return is activity like a new connection: wake a sleeping display.
+            DispatchQueue.main.async { self?.deviceActive(.connect, connection) }
+        }
+        server.onMediaViewersChanged = { [weak self] viewers, changed, enabled in
+            // Apply snapshots in network queue order, even if connection callbacks are still queued.
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let before = self.mediaViewers
+                self.mediaViewers = viewers
+                if let changed, !enabled {
+                    let id = ObjectIdentifier(changed)
+                    if self.flipWait == id { self.flipWait = nil }
+                    self.releaseKeys(of: id)
+                }
+                if viewers.isEmpty && !before.isEmpty {
+                    self.catalog.thumbnailsWanted = false
+                    self.stopRecheck()
+                }
+                if !viewers.isEmpty && (before.isEmpty || (changed != nil && enabled)) {
+                    self.catalog.thumbnailsWanted = true
+                    self.startRecheck()
+                }
+                // Paused connections do not decide home/away quality. A change applies immediately;
+                // a source switch already underway takes the newest value in its own tail.
+                let flipped = self.routesChanged(joined: nil, endpoint: changed.map { "\($0.endpoint)" })
+                Task { @MainActor in
+                    if flipped { await self.applyPending() }
+                    await self.reconcileMedia()
+                }
+            }
+        }
+
         server.onAudioListenersChanged = { [weak self] count in
-            Task { @MainActor in
+            DispatchQueue.main.async {
                 guard let self else { return }
                 self.audioListeners = count
                 self.audioFollow()
@@ -432,7 +477,7 @@ package final class StreamCoordinator {
                 // A sleeping display gives black frames: the session's start wakes it, as a key would.
                 self.deviceActive(.connect, connection)
                 // Catalog first: the client's UI needs it even if the keyframe is slow to come.
-                self.catalog.thumbnailsWanted = true
+                if !self.mediaViewers.isEmpty { self.catalog.thumbnailsWanted = true }
                 self.sendCatalog(to: connection)
                 self.encoder?.requestKeyframe()
             }
@@ -473,6 +518,7 @@ package final class StreamCoordinator {
                 guard let self else { return }
                 let wasEmpty = self.catalog.clientCount == 0
                 self.catalog.clientCount = count          // the catalog idles itself at 0
+                if count > 0 { Task { @MainActor in await self.reconcileMedia() } }
                 // Nobody is watching: stop capturing and encoding. The next client picks afresh.
                 if count == 0 {
                     self.viewport = nil
@@ -500,7 +546,12 @@ package final class StreamCoordinator {
                                                 isKeyframe: false, payload: Wire.encode(apps)))
         }
         server.onMessage = { [weak self] message, connection in
-            Task { @MainActor in await self?.handle(message, from: connection) }
+            if message.kind == .input {
+                // Inputs and the pause's key release share the main queue in network order.
+                DispatchQueue.main.async { self?.handleInput(message, from: connection) }
+            } else {
+                Task { @MainActor in await self?.handle(message, from: connection) }
+            }
         }
         catalog.onWindowsChanged = { [weak self] infos in
             Task { @MainActor in await self?.windowsChanged(infos) }
@@ -755,13 +806,14 @@ package final class StreamCoordinator {
     @discardableResult
     private func routesChanged(joined: ObjectIdentifier?, endpoint: String?) -> Bool {
         let before = awayWanted
-        awayWanted = AwayPolicy.wanted(devicesAway: clients.values.compactMap(\.route).map(\.isAway), current: awayWanted)
+        let viewerRoutes = clients.compactMap { id, state in mediaViewers.contains(id) ? state.route : nil }
+        awayWanted = AwayPolicy.wanted(devicesAway: viewerRoutes.map(\.isAway), current: awayWanted)
         let flipped = awayWanted != before
         if flipped {
             print(awayWanted ? AwayPolicy.awayLine(target) : AwayPolicy.homeLine(target, endpoint: endpoint ?? "a device"))
             if let joined { flipAwaits(joined) } else { flipWait = nil }
         }
-        status.update { $0.away = awayWanted && clients.values.contains { $0.route != nil } }   // publishes (status.onChange)
+        status.update { $0.away = awayWanted && !viewerRoutes.isEmpty }   // publishes (status.onChange)
         return flipped
     }
 
@@ -942,13 +994,40 @@ package final class StreamCoordinator {
 
     // MARK: Client messages
 
+    /// Runs synchronously on the main queue, ordered with the network queue's pause callback.
+    private func handleInput(_ message: StreamMessage, from connection: NWConnection) {
+        let input = Wire.decode(InputEvent.self, from: message.payload)
+        deviceActive(.message(.input, input), connection)
+        guard let event = input else { return }
+        let device = ObjectIdentifier(connection)
+        guard let rect = currentSourceRect() else {
+            // Nothing streams (between sources, or the stream stopped: the window closed under a
+            // drag): input has nowhere to land. The up of a key or a button the Mac has down still
+            // goes (DroppedInput), a button's where the pointer is (`.null`), so no modifier this
+            // device pressed stays down to make a later click a ⌘-click, and no button to make
+            // every later move a drag.
+            if injector.isUpOfSomethingDown(event) { deliver(event, in: .null, from: device) }
+            return
+        }
+        // A click, a key or text may close a view a gesture opened; a move or a scroll does not.
+        gestureChords.input(Self.gestureInput(event))
+        // A synthetic host acts on nothing: it posts no event (InputInjector.dryRun), so it
+        // activates and raises nothing either.
+        if !synthetic { raiseIfInteracting(event) }
+        deliver(event, in: rect, from: device)
+        desktopInputMayActivate(event)
+    }
+
     private func handle(_ message: StreamMessage, from connection: NWConnection) async {
-        // Input decoded once, for the display's rule and for its case below.
-        let input = message.kind == .input ? Wire.decode(InputEvent.self, from: message.payload) : nil
-        // Every message goes to DisplayWake, which alone says which of them is a person at the device
-        // (a pick never is: the device asks for the Desktop by itself), issue #134.
-        deviceActive(.message(message.kind, input), connection)
+        // A pick never wakes the display: the device also asks for the Desktop by itself.
+        deviceActive(.message(message.kind, nil), connection)
         switch message.kind {
+        case .notificationSubscription:
+            let id = ObjectIdentifier(connection)
+            guard let route = clients[id]?.route, route.encrypted,
+                  let subscription = Wire.decode(NotificationSubscription.self, from: message.payload),
+                  notificationMirror.subscribe(subscription, fingerprint: route.fingerprint) else { return }
+            clients[id]?.notificationsSubscribed = subscription.enabled
         case .selectSource:
             guard let source = Wire.decode(StreamSource.self, from: message.payload) else { return }
             // A window picked comes forward on the Mac, which closes a view a gesture opened; the
@@ -986,25 +1065,6 @@ package final class StreamCoordinator {
             NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
                 if let error { print("Launch failed: \(error.localizedDescription)") }
             }
-        case .input:
-            guard let event = input else { return }
-            let device = ObjectIdentifier(connection)
-            guard let rect = currentSourceRect() else {
-                // Nothing streams (between sources, or the stream stopped: the window closed under a
-                // drag): input has nowhere to land. The up of a key or a button the Mac has down still
-                // goes (DroppedInput), a button's where the pointer is (`.null`), so no modifier this
-                // device pressed stays down to make a later click a ⌘-click, and no button to make
-                // every later move a drag.
-                if injector.isUpOfSomethingDown(event) { deliver(event, in: .null, from: device) }
-                return
-            }
-            // A click, a key or text may close a view a gesture opened; a move or a scroll does not.
-            gestureChords.input(Self.gestureInput(event))
-            // A synthetic host acts on nothing: it posts no event (InputInjector.dryRun), so it
-            // activates and raises nothing either.
-            if !synthetic { raiseIfInteracting(event) }
-            deliver(event, in: rect, from: device)
-            desktopInputMayActivate(event)
         case .gesture:
             // A three- or four-finger gesture (docs/trackpad-gestures-plan.md §7.4), which the Mac
             // turns into its own shortcut. At most `gesturesPerSecond` a second per connection: a
@@ -1251,6 +1311,8 @@ package final class StreamCoordinator {
     /// size changes; refreshing now just saves waiting up to two seconds for its next poll.
     /// The desktop and nothing-streaming ignore viewports.
     private func applyViewportToActiveWindow() async {
+        // Resume's select takes the latest viewport without rebuilding a paused pipeline.
+        guard !mediaPaused else { return }
         // A different rate (a ProMotion device joined, Low Power Mode toggled) needs a new capture
         // interval and encoder session: one restart, whatever the source.
         if active != .none, effectiveFPS != fps { await select(active); return }
@@ -1311,6 +1373,67 @@ package final class StreamCoordinator {
         await select(source, bringForward: true)
     }
 
+    /// Common switch tail, including a pause/resume that arrived during an asynchronous switch.
+    private func finishSwitch() {
+        switching = false
+        restartOf = nil
+        var pick = pickArrivedWhileSwitching
+        pickArrivedWhileSwitching = nil
+        // Requests that arrived mid-switch, applied now that `switching` is clear again (every
+        // return path, including the early ones). A last client leaving wins over a viewport
+        // and over a queued pick: there is nobody left to fit the window to or stream to.
+        if deselectWhenSettled {
+            deselectWhenSettled = false
+            if catalog.clientCount == 0, active != .none {
+                viewportArrivedWhileSwitching = false
+                Task { @MainActor in await self.select(.none) }
+            }
+        }
+        if catalog.clientCount == 0 { pick = nil }
+        if let pick, pick != active {
+            // The pick's own select fits the latest viewport. Run after it has started, the
+            // viewport tail would resize the old window, which `active` still names mid-switch.
+            viewportArrivedWhileSwitching = false
+            // Through the handler's rule again, not straight to `select`: another restart can
+            // start before this Task runs (a viewport's new rate, an encoder hang, a lost
+            // display), and `select` would drop the pick; the rule queues it behind that one.
+            Task { @MainActor in await self.handlePick(pick) }
+        } else if viewportArrivedWhileSwitching {
+            viewportArrivedWhileSwitching = false
+            Task { @MainActor in await self.applyViewportToActiveWindow() }
+        }
+        // Settings, or a flip between the home and the away quality, that came in meanwhile; a
+        // no-op when the pick's select commits them first.
+        if pendingConfig != nil || (awayWanted != awayRunning && flipWait == nil) { Task { @MainActor in await self.applyPending() } }
+        // A stream that did not start (its window gone, capture refused): nothing streams, so
+        // the links have nothing to be judged at, and a window sized for it goes back.
+        if active == .none { judgeLinks(nil); restoreFits(keeping: nil) }
+        Task { @MainActor in await self.reconcileMedia() }
+    }
+
+    /// Stop capture only after the final viewer pauses; the selected source and stage stay in place.
+    /// `switching` serializes the stop with source changes, and its tail retries the newest state.
+    private func reconcileMedia() async {
+        guard !switching, !shuttingDown, catalog.clientCount > 0 else { return }
+        if mediaViewers.isEmpty, !mediaPaused, active != .none {
+            switching = true
+            restartOf = active // a different pick during the asynchronous stop is kept
+            defer { finishSwitch() }
+            await capture.stop()
+            await syntheticCapture.stop()
+            capture.onFrame = nil
+            syntheticCapture.onFrame = nil
+            encoder = nil
+            mediaPaused = true
+            server.resetForNewStream()
+            server.setStreaming(false)
+            lastParameterSets = nil
+        } else if !mediaViewers.isEmpty, mediaPaused {
+            mediaPaused = false
+            if active != .none { await select(active) }
+        }
+    }
+
     /// Streams `source` in place of whatever streams now. Also how the host restarts the current
     /// source (a resize, a rate change, the encoder fallback, a lost virtual display).
     /// `bringForward` marks a pick instead: the device's switcher, the command line, an app
@@ -1322,43 +1445,10 @@ package final class StreamCoordinator {
     func select(_ source: StreamSource, bringForward: Bool = false) async {
         guard !switching, !shuttingDown else { return }
         switching = true
+        mediaPaused = false // this switch may start a pipeline; its tail reapplies any pending pause
         if source != active { missingPolls = 0 }    // a window's looks off the list are its own
         restartOf = (source == active && source != .none) ? source : nil
-        defer {
-            switching = false
-            restartOf = nil
-            var pick = pickArrivedWhileSwitching
-            pickArrivedWhileSwitching = nil
-            // Requests that arrived mid-switch, applied now that `switching` is clear again (every
-            // return path, including the early ones). A last client leaving wins over a viewport
-            // and over a queued pick: there is nobody left to fit the window to or stream to.
-            if deselectWhenSettled {
-                deselectWhenSettled = false
-                if catalog.clientCount == 0, active != .none {
-                    viewportArrivedWhileSwitching = false
-                    Task { @MainActor in await self.select(.none) }
-                }
-            }
-            if catalog.clientCount == 0 { pick = nil }
-            if let pick, pick != active {
-                // The pick's own select fits the latest viewport. Run after it has started, the
-                // viewport tail would resize the old window, which `active` still names mid-switch.
-                viewportArrivedWhileSwitching = false
-                // Through the handler's rule again, not straight to `select`: another restart can
-                // start before this Task runs (a viewport's new rate, an encoder hang, a lost
-                // display), and `select` would drop the pick; the rule queues it behind that one.
-                Task { @MainActor in await self.handlePick(pick) }
-            } else if viewportArrivedWhileSwitching {
-                viewportArrivedWhileSwitching = false
-                Task { @MainActor in await self.applyViewportToActiveWindow() }
-            }
-            // Settings, or a flip between the home and the away quality, that came in meanwhile; a
-            // no-op when the pick's select commits them first.
-            if pendingConfig != nil || (awayWanted != awayRunning && flipWait == nil) { Task { @MainActor in await self.applyPending() } }
-            // A stream that did not start (its window gone, capture refused): nothing streams, so
-            // the links have nothing to be judged at, and a window sized for it goes back.
-            if active == .none { judgeLinks(nil); restoreFits(keeping: nil) }
-        }
+        defer { finishSwitch() }
 
         await capture.stop()
         await syntheticCapture.stop()
@@ -1368,7 +1458,7 @@ package final class StreamCoordinator {
         // Mac still goes, in order: a gesture's chord held behind it, and the up of a key or a button
         // the Mac has down (DroppedInput: a modifier left down makes the next click a ⌘-click, a
         // button every move a drag), a button's where the pointer is (`.null`), not where the old
-        // source would have put it. The keys of devices that left meanwhile go up after them.
+        // source would have put it. Releases remain in their place between earlier and later input.
         let dropped = heldInput
         heldInput = []; holdUntil = 0
         for item in dropped {
@@ -1377,9 +1467,10 @@ package final class StreamCoordinator {
                 if injector.isUpOfSomethingDown(event) { injector.apply(event, in: .null, from: device) }
             case .chord(let keyCode, let flags):
                 injector.chord(keyCode: keyCode, flags: flags)
+            case .releaseKeys(let device):
+                injector.releaseKeys(of: device)
             }
         }
-        releaseKeysOfDevicesThatLeft()
         encoder = nil                  // deinit invalidates the VT session
         server.resetForNewStream()          // every client waits for the next parameter sets + keyframe
         lastParameterSets = nil             // and the new stream's first go out as a new frame (DisplayWake)
@@ -1668,11 +1759,13 @@ package final class StreamCoordinator {
     /// Input held for an activation, replayed in order once the app is up, each with the device that
     /// sent it (its keys are its own, KeyStrokes); a gesture's chord that arrives meanwhile waits
     /// behind it, so a click just before the gesture lands first.
-    private enum Held { case input(InputEvent, CGRect, KeyStrokes.Device), chord(keyCode: UInt16, flags: UInt64) }
+    private enum Held {
+        case input(InputEvent, CGRect, KeyStrokes.Device)
+        case chord(keyCode: UInt16, flags: UInt64)
+        case releaseKeys(KeyStrokes.Device)
+    }
     private var heldInput: [Held] = []
     private var holdUntil: CFAbsoluteTime = 0
-    /// Devices that left while input was held: their keys go up after it (`releaseKeys`).
-    private var leftWhileHeld: [KeyStrokes.Device] = []
     /// How long held input waits for the app to become frontmost before it is replayed anyway.
     private static let activationTimeout: TimeInterval = 0.6
 
@@ -1691,23 +1784,16 @@ package final class StreamCoordinator {
             switch item {
             case .input(let event, let rect, let device): logClick(event, in: rect); injector.apply(event, in: rect, from: device)
             case .chord(let keyCode, let flags): injector.chord(keyCode: keyCode, flags: flags)
+            case .releaseKeys(let device): injector.releaseKeys(of: device)
             }
         }
-        releaseKeysOfDevicesThatLeft()
     }
 
-    /// A device left: the keys it still holds down on the Mac go up (InputInjector.releaseKeys),
-    /// after whatever of its input is still held for an activation, so no up of its own is overtaken
-    /// and no down of its own comes after.
+    /// A device left or paused: the keys it still holds down on the Mac go up (InputInjector.releaseKeys),
+    /// after its input already held for an activation and before input from a later resume.
     private func releaseKeys(of device: KeyStrokes.Device) {
-        if !heldInput.isEmpty || CFAbsoluteTimeGetCurrent() < holdUntil { leftWhileHeld.append(device); return }
+        if !heldInput.isEmpty || CFAbsoluteTimeGetCurrent() < holdUntil { heldInput.append(.releaseKeys(device)); return }
         injector.releaseKeys(of: device)
-    }
-
-    private func releaseKeysOfDevicesThatLeft() {
-        let left = leftWhileHeld
-        leftWhileHeld = []
-        for device in left { injector.releaseKeys(of: device) }
     }
 
     private func raiseIfInteracting(_ event: InputEvent) {
@@ -1952,10 +2038,10 @@ package final class StreamCoordinator {
     /// before a fit landed can still give at its old value; a resize is `windowsChanged`'s.
     private func catalogPolled() {
         menusPolled()
-        guard !switching, !shuttingDown, case .window(let id) = active, !(virtualDisplay && stage.isStaged),
+        guard !switching, !shuttingDown, !mediaPaused, case .window(let id) = active, !(virtualDisplay && stage.isStaged),
               let w = catalog.window(id: id), capturePixelScale(of: w) != streamPixelScale else { return }
         Task { @MainActor in
-            guard !self.switching, self.active == .window(id) else { return }
+            guard !self.switching, !self.mediaPaused, self.active == .window(id) else { return }
             await self.select(.window(id))
         }
     }
@@ -2187,6 +2273,7 @@ package final class StreamCoordinator {
         injector.releaseAll()
         server.goodbyeAll(Goodbye(reason: Goodbye.quit), within: 0.1)
         shuttingDown = true
+        notificationMirror.stop()
         audio.shutdown()   // "Audio stopped: Sill is quitting."
         restoreFits(keeping: nil)
         stage.release()
@@ -2308,7 +2395,7 @@ package final class StreamCoordinator {
     }
 
     private func startRecheck() {
-        guard useSoftwareEncoder, !softwareOnly, !shuttingDown, recheckTask == nil, catalog.clientCount > 0 else { return }
+        guard useSoftwareEncoder, !softwareOnly, !shuttingDown, recheckTask == nil, catalog.clientCount > 0, !mediaViewers.isEmpty else { return }
         recheckToken += 1
         let token = recheckToken
         recheckTask = Task { @MainActor [weak self] in
@@ -2372,6 +2459,7 @@ package final class StreamCoordinator {
             let now = CFAbsoluteTimeGetCurrent()
             lastRecheck = now
             guard useSoftwareEncoder, !shuttingDown else { return }
+            if mediaViewers.isEmpty { recheckDue = now + recheckInterval; return }
             if result.ok, let fps = result.fps { enginePixelRate = max(enginePixelRate, fps * Double(pixels)) }
             let measured = result.fps.map { "\(Int($0.rounded())) fps at \(size.width)×\(size.height)" } ?? "answered at \(size.width)×\(size.height)"
             if result.ok, (result.fps ?? .infinity) >= needed {
@@ -2509,6 +2597,9 @@ package final class StreamCoordinator {
             if !(virtualDisplay && stage.isStaged), let scw = catalog.window(id: id) {
                 listedFullScreen = WindowRestore.coversDisplay(scw.frame, WindowSizer.displayFrames()) ? id : nil
             }
+            // No encoder exists while every viewer is paused. Retain the source and stage, and
+            // apply any resize or display change when a viewer resumes and select rebuilds it.
+            if mediaPaused { broadcastList(); return }
             if virtualDisplay, stage.isStaged {
                 // Full screen: the crop is a band of the display, not the window's frame. Stay put
                 // while the window still covers the display; restart once it has left full screen.
@@ -2636,7 +2727,27 @@ package final class StreamCoordinator {
         StreamMessage(kind: .windowList, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
                       payload: Wire.encode(WindowList(macName: macName, windows: catalog.infos, active: active, launchID: launchID,
                                                       hostVersion: hostVersion, protocol: SillProtocol.current,
-                                                      gestures: TrackpadGesture.generation, clipboard: clipboard.advertised)))
+                                                      gestures: TrackpadGesture.generation, clipboard: clipboard.advertised,
+                                                      mediaSubscription: 1, notificationMirroring: remote?.identity == nil ? nil : 1)))
+    }
+
+    /// Never broadcast notification contents to the ordinary catalog audience. Pairing and the
+    /// per-device opt-in are checked again for each event, even if a connection is still open
+    /// while removal of its pairing is draining a goodbye.
+    private func sendNotification(_ event: MirroredNotification) {
+        let now = Date().timeIntervalSince1970
+        let message = StreamMessage(kind: .mirroredNotification, timestamp: now, isKeyframe: false,
+                                    payload: Wire.encode(event))
+        for state in clients.values {
+            guard state.notificationsSubscribed, let route = state.route, route.encrypted,
+                  let fingerprint = route.fingerprint, remote?.isPaired(fingerprint) == true,
+                  let connection = state.connection else { continue }
+            if let (_, png) = catalog.allIcons.first(where: { $0.0 == event.appBundleID }) {
+                server.send(StreamMessage(kind: .appIcon, timestamp: now, isKeyframe: false,
+                                          payload: ImageBlob.encodeIcon(bundleID: event.appBundleID, png: png)), to: connection)
+            }
+            server.send(message, to: connection)
+        }
     }
 
     private func broadcastList() { server.broadcast(listMessage()) }

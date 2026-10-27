@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- The personal fork must use its owner's Push Notifications App ID and profile. -->
+    <key>aps-environment</key>
+    <string>$(SILL_APNS_ENTITLEMENT)</string>
+</dict>
+</plist>

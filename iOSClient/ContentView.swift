@@ -8,16 +8,25 @@ struct ContentView: View {
     /// harness's `-SillLive 1` session, which runs on this same client.
     @StateObject private var statsReporter = ClientStatsReporter()
     @Environment(\.scenePhase) private var scenePhase
+    @EnvironmentObject private var notificationInbox: NotificationInbox
+    @SceneStorage("Sill.resumeSceneID") private var resumeSceneID = UUID().uuidString
 
     init(savedMacStore: SavedMacStore) {
         _client = StateObject(wrappedValue: StreamClient(savedMacStore: savedMacStore))
     }
 
     var body: some View {
-        root.onAppear { statsReporter.attach(to: client) }
-            // This window's sound: a scene in the background is not heard, though another keeps the app
-            // active (inactive is still on screen: Control Center over it, a headless simulator).
-            .onChange(of: scenePhase, initial: true) { _, phase in client.sound.setSceneForeground(phase != .background) }
+        root.onAppear {
+            statsReporter.attach(to: client)
+            client.attachNotificationInbox(notificationInbox)
+            updateSceneSession()
+        }
+        .onChange(of: scenePhase, initial: true) { _, _ in updateSceneSession() }
+    }
+
+    private func updateSceneSession() {
+        client.sceneSessionChanged(id: resumeSceneID, background: scenePhase == .background,
+                                   active: scenePhase == .active)
     }
 
     @ViewBuilder private var root: some View {
@@ -53,6 +62,7 @@ struct ContentView: View {
             #endif
             client.startBrowsing()
             client.startRemote()                 // saved Macs without a key are cleared; DEBUG pairing arguments
+            updateSceneSession()
             #if DEBUG
             client.connectFromLaunchArgument()   // -SillConnect host:port, for the off-Bonjour test hosts
             Self.orientFromLaunchArgument()      // -SillOrientation landscape|portrait
@@ -999,6 +1009,7 @@ enum SettingsScript {
 /// this one's place (`ContentView`).
 struct ConnectScreen: View {
     @ObservedObject var client: StreamClient
+    @EnvironmentObject private var notificationInbox: NotificationInbox
     @State private var adding: Bool
     /// The home card's Mac: a tap on its row asked, and the Mac shows its code (`homeAsk`). Kept
     /// through the pairing's end, "Paired with…", while the session after it comes up.
@@ -1272,6 +1283,8 @@ struct ConnectScreen: View {
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 10)
             .padding(.bottom, 4)
+
+        NotificationInboxButton(inbox: notificationInbox)
 
         // A Mac that no longer serves this version said so (GoodbyePolicy's "update", its words the
         // status line above): where to get the new one, while the status line still says why. Not

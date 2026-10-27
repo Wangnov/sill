@@ -912,6 +912,28 @@
         }
       }
     },
+    "Allow notifications for Sill in iOS Settings to receive alerts while Sill is in the background.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow notifications for Sill in iOS Settings to receive alerts while Sill is in the background."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请在 iOS 设置中允许 Sill 发送通知，以便在 Sill 位于后台时接收提醒。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請在 iOS 設定中允許 Sill 傳送通知，以便在 Sill 位於背景時接收提醒。"
+          }
+        }
+      }
+    },
     "Also looking nearby": {
       "localizations": {
         "en": {
@@ -1151,6 +1173,50 @@
           "stringUnit": {
             "state": "translated",
             "value": "取消"
+          }
+        }
+      }
+    },
+    "Choose whether Sill may show notification alerts when iOS asks.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose whether Sill may show notification alerts when iOS asks."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当 iOS 提示时，选择是否允许 Sill 显示通知提醒。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "當 iOS 提示時，選擇是否允許 Sill 顯示通知提醒。"
+          }
+        }
+      }
+    },
+    "Clear Inbox": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear Inbox"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清空收件箱"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清空收件匣"
           }
         }
       }
@@ -1585,6 +1651,28 @@
       }
     },
     "Drag to move the pointer. Tap to click, two fingers to scroll.": {},
+    "Enable mirroring here and on your Mac. Pair and connect once to register this device.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enable mirroring here and on your Mac. Pair and connect once to register this device."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请在此处和 Mac 上开启镜像，然后配对并连接一次以注册此设备。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請在此處和 Mac 上開啟鏡像，然後配對並連線一次以註冊此裝置。"
+          }
+        }
+      }
+    },
     "Enter Code Instead": {
       "localizations": {
         "en": {
@@ -1743,6 +1831,28 @@
       }
     },
     "Larger Picture": {},
+    "Live notifications work while connected. Background alerts need a push-enabled signed build and your Mac’s APNs provider configuration.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live notifications work while connected. Background alerts need a push-enabled signed build and your Mac’s APNs provider configuration."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接期间可接收实时通知。后台提醒需要启用推送的签名版本以及 Mac 的 APNs 推送服务配置。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "連線期間可接收即時通知。背景提醒需要啟用推播的簽署版本以及 Mac 的 APNs 推播服務設定。"
+          }
+        }
+      }
+    },
     "Loading settings…": {},
     "Looking for Macs on this network": {
       "localizations": {
@@ -1790,6 +1900,28 @@
     },
     "Menus": {},
     "Minimize window": {},
+    "Mirror Mac Notifications": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mirror Mac Notifications"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "镜像 Mac 通知"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "鏡像 Mac 通知"
+          }
+        }
+      }
+    },
     "Move left": {},
     "Move right": {},
     "Mute": {},
@@ -1882,6 +2014,28 @@
         }
       }
     },
+    "No Mac Notifications": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Mac Notifications"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有 Mac 通知"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "沒有 Mac 通知"
+          }
+        }
+      }
+    },
     "None": {
       "localizations": {
         "en": {
@@ -1948,6 +2102,50 @@
         }
       }
     },
+    "Notifications": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notifications"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知"
+          }
+        }
+      }
+    },
+    "Notifications are displayed by Sill. The source app’s icon appears in this inbox; it cannot replace Sill’s icon in system notifications.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notifications are displayed by Sill. The source app’s icon appears in this inbox; it cannot replace Sill’s icon in system notifications."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知由 Sill 显示。来源 App 的图标会显示在此收件箱中，但无法替代系统通知中的 Sill 图标。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知由 Sill 顯示。來源 App 的圖示會顯示在此收件匣中，但無法取代系統通知中的 Sill 圖示。"
+          }
+        }
+      }
+    },
     "On the virtual display": {},
     "On your Mac, choose Pair iPhone or iPad… in the Sill menu, then point this %@ at the code.": {
       "comment": "The quoted pairing command should match the Mac app menu. The argument is iPhone or iPad.",
@@ -1994,6 +2192,28 @@
         }
       }
     },
+    "Open Notification Settings": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Notification Settings"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开通知设置"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開啟通知設定"
+          }
+        }
+      }
+    },
     "Open Settings": {
       "localizations": {
         "en": {
@@ -2012,6 +2232,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "開啟設定"
+          }
+        }
+      }
+    },
+    "Open notifications mirrored from your paired Macs.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open notifications mirrored from your paired Macs."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开从已配对 Mac 镜像的通知。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開啟從已配對 Mac 鏡像的通知。"
           }
         }
       }
@@ -3074,6 +3316,28 @@
         }
       }
     },
+    "The latest 100 notifications stay on this device. Notifications cleared from iOS Notification Center before Sill opens may not appear here.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The latest 100 notifications stay on this device. Notifications cleared from iOS Notification Center before Sill opens may not appear here."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此设备保留最近 100 条通知。在 Sill 打开之前从 iOS 通知中心清除的通知可能不会显示在这里。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此裝置保留最近 100 則通知。在 Sill 開啟之前從 iOS 通知中心清除的通知可能不會顯示在這裡。"
+          }
+        }
+      }
+    },
     "This %@": {},
     "This %@ can’t look up %@.": {
       "localizations": {
@@ -3164,6 +3428,28 @@
         }
       }
     },
+    "This build has no APNs environment configured. Live notifications still work while connected.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This build has no APNs environment configured. Live notifications still work while connected."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此版本未配置 APNs 环境。连接期间仍可接收实时通知。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此版本未設定 APNs 環境。連線期間仍可接收即時通知。"
+          }
+        }
+      }
+    },
     "This code expired. Choose Pair iPhone or iPad… on your Mac for a new one.": {
       "localizations": {
         "en": {
@@ -3182,6 +3468,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "配對碼已過期。請在 Mac 上選擇「配對 iPhone 或 iPad⋯」以取得新配對碼。"
+          }
+        }
+      }
+    },
+    "This device is ready to register for background alerts on its next paired connection. Your Mac also needs its own APNs provider configuration.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This device is ready to register for background alerts on its next paired connection. Your Mac also needs its own APNs provider configuration."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此设备将在下次配对连接时注册后台提醒。你的 Mac 还需要配置自己的 APNs 推送服务。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此裝置將在下次配對連線時註冊背景提醒。你的 Mac 還需要設定自己的 APNs 推播服務。"
           }
         }
       }

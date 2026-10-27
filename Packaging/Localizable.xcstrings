@@ -352,6 +352,28 @@
         }
       }
     },
+    "A paired TLS identity is required.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A paired TLS identity is required."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要配对的 TLS 身份。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要配對的 TLS 身分。"
+          }
+        }
+      }
+    },
     "A paired device can see and control this Mac on your network, nearby, and from afar while Remote Access is on. If one is lost, remove it here.": {
       "localizations": {
         "en": {
@@ -392,6 +414,50 @@
           "stringUnit": {
             "state": "translated",
             "value": "配對後的裝置可以查看及控制這部 Mac。"
+          }
+        }
+      }
+    },
+    "A paired device supplied incomplete APNs registration settings. Live inbox delivery remains available.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A paired device supplied incomplete APNs registration settings. Live inbox delivery remains available."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已配对设备提供的 APNs 注册设置不完整。实时收件箱仍可使用。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已配對裝置提供的 APNs 註冊設定不完整。即時收件匣仍可使用。"
+          }
+        }
+      }
+    },
+    "A paired device's APNs topic or environment does not match this Mac's provider settings.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A paired device's APNs topic or environment does not match this Mac's provider settings."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已配对设备的 APNs 主题或环境与此 Mac 的推送服务设置不匹配。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已配對裝置的 APNs 主題或環境與此 Mac 的推播服務設定不符。"
           }
         }
       }
@@ -437,6 +503,138 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ 輸入的配對碼有誤。還可嘗試 %lld 次。"
+          }
+        }
+      }
+    },
+    "APNs Key ID": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs Key ID"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs 密钥 ID"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs 金鑰 ID"
+          }
+        }
+      }
+    },
+    "APNs Key ID must be 10 letters or digits.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs Key ID must be 10 letters or digits."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs 密钥 ID 必须为 10 个字母或数字。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs 金鑰 ID 必須為 10 個字母或數字。"
+          }
+        }
+      }
+    },
+    "APNs Team ID must be 10 letters or digits.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs Team ID must be 10 letters or digits."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs 团队 ID 必须为 10 个字母或数字。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs 團隊 ID 必須為 10 個字母或數字。"
+          }
+        }
+      }
+    },
+    "APNs configured; awaiting a paired device registration and a notification. Delivery is not verified yet.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs configured; awaiting a paired device registration and a notification. Delivery is not verified yet."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs 已配置；正在等待已配对设备注册及通知。传送尚未验证。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs 已設定；正在等待已配對裝置註冊及通知。傳送尚未驗證。"
+          }
+        }
+      }
+    },
+    "APNs environment": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs environment"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs 环境"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs 環境"
+          }
+        }
+      }
+    },
+    "APNs topic must be an app bundle identifier.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs topic must be an app bundle identifier."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs 主题必须是 App 的 bundle identifier。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs 主題必須是 App 的 bundle identifier。"
           }
         }
       }
@@ -503,6 +701,50 @@
           "stringUnit": {
             "state": "translated",
             "value": "輔助使用"
+          }
+        }
+      }
+    },
+    "Accessibility Settings…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accessibility Settings…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "辅助功能设置…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "輔助使用設定…"
+          }
+        }
+      }
+    },
+    "Accessibility permission is required to observe exposed notification text.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accessibility permission is required to observe exposed notification text."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要辅助功能权限才能读取公开的通知文本。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要輔助使用權限才能讀取公開的通知文字。"
           }
         }
       }
@@ -709,6 +951,72 @@
         }
       }
     },
+    "Apple Team ID": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple Team ID"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple 团队 ID"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple 團隊 ID"
+          }
+        }
+      }
+    },
+    "Apple accepted the last APNs request. Device display is not confirmed.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple accepted the last APNs request. Device display is not confirmed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple 已接受上一次 APNs 请求，尚未确认设备是否显示。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple 已接受上一次 APNs 請求，尚未確認裝置是否顯示。"
+          }
+        }
+      }
+    },
+    "Apple rejected an expired or invalid device token; waiting for that device to register again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple rejected an expired or invalid device token; waiting for that device to register again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple 拒绝了过期或无效的设备令牌；正在等待该设备重新注册。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple 拒絕了過期或無效的裝置權杖；正在等待該裝置重新註冊。"
+          }
+        }
+      }
+    },
     "Approve Sill in System Settings › Login Items": {
       "localizations": {
         "en": {
@@ -892,6 +1200,94 @@
     "Change…": {},
     "Check Now": {},
     "Check for updates automatically": {},
+    "Choose an absolute path to an APNs .p8 key.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose an absolute path to an APNs .p8 key."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请选择 APNs .p8 密钥的绝对路径。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請選擇 APNs .p8 金鑰的絕對路徑。"
+          }
+        }
+      }
+    },
+    "Choose the APNs sandbox or production environment.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose the APNs sandbox or production environment."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请选择 APNs 沙盒或生产环境。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請選擇 APNs 沙盒或正式環境。"
+          }
+        }
+      }
+    },
+    "Choose your external APNs .p8 key": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose your external APNs .p8 key"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择外部 APNs .p8 密钥"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選擇外部 APNs .p8 金鑰"
+          }
+        }
+      }
+    },
+    "Choose…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選擇…"
+          }
+        }
+      }
+    },
     "Click to show a code.": {
       "localizations": {
         "en": {
@@ -1021,6 +1417,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "剪下"
+          }
+        }
+      }
+    },
+    "Deliver iOS alerts through APNs": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deliver iOS alerts through APNs"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通过 APNs 发送 iOS 提醒"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "透過 APNs 傳送 iOS 提醒"
           }
         }
       }
@@ -1264,6 +1682,50 @@
           "stringUnit": {
             "state": "translated",
             "value": "編輯"
+          }
+        }
+      }
+    },
+    "Experimental AX observation is running. Hidden, grouped or short-lived notifications may be missed.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental AX observation is running. Hidden, grouped or short-lived notifications may be missed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实验性辅助功能监听正在运行，可能遗漏隐藏、分组或短暂显示的通知。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "實驗性輔助使用監聽正在運作，可能遺漏隱藏、分組或短暫顯示的通知。"
+          }
+        }
+      }
+    },
+    "External .p8 private-key path": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "External .p8 private-key path"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外部 .p8 私钥路径"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外部 .p8 私密金鑰路徑"
           }
         }
       }
@@ -1614,6 +2076,28 @@
         }
       }
     },
+    "Live inbox only. APNs delivery is off.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live inbox only. APNs delivery is off."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅发送到实时收件箱。APNs 推送已关闭。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "僅傳送到即時收件匣。APNs 推播已關閉。"
+          }
+        }
+      }
+    },
     "Local Network": {
       "localizations": {
         "en": {
@@ -1636,6 +2120,28 @@
         }
       }
     },
+    "Mac notification": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mac notification"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mac 通知"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mac 通知"
+          }
+        }
+      }
+    },
     "Minimize": {
       "localizations": {
         "en": {
@@ -1654,6 +2160,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "縮小"
+          }
+        }
+      }
+    },
+    "Mirror Mac notifications": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mirror Mac notifications"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "镜像 Mac 通知"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "鏡像 Mac 通知"
           }
         }
       }
@@ -1747,6 +2275,28 @@
       }
     },
     "No VPN is running on this Mac. Install one such as Tailscale on this Mac and on your iPhone or iPad, or allow connections from the internet below.": {},
+    "No paired device has registered for this APNs topic and environment.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No paired device has registered for this APNs topic and environment."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有已配对设备注册此 APNs 主题和环境。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "沒有已配對裝置註冊此 APNs 主題和環境。"
+          }
+        }
+      }
+    },
     "No paired devices yet.": {
       "localizations": {
         "en": {
@@ -1832,6 +2382,116 @@
           "stringUnit": {
             "state": "translated",
             "value": "未廣播；測試用戶端連接連接埠 %lld。"
+          }
+        }
+      }
+    },
+    "Notification Center did not expose readable notification windows. The test notification is still available.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification Center did not expose readable notification windows. The test notification is still available."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知中心未提供可读取的通知窗口。仍可发送测试通知。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知中心未提供可讀取的通知視窗。仍可傳送測試通知。"
+          }
+        }
+      }
+    },
+    "Notification delivery is off.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification delivery is off."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知传送已关闭。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知傳送已關閉。"
+          }
+        }
+      }
+    },
+    "Notification mirroring (experimental)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification mirroring (experimental)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知镜像（实验性）"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知鏡像（實驗性）"
+          }
+        }
+      }
+    },
+    "Notification mirroring is off.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification mirroring is off."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知镜像已关闭。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知鏡像已關閉。"
+          }
+        }
+      }
+    },
+    "Notification mirroring test": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification mirroring test"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知镜像测试"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知鏡像測試"
           }
         }
       }
@@ -2503,6 +3163,28 @@
       }
     },
     "Prioritize encoding speed": {},
+    "Production (distribution build)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Production (distribution build)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生产环境（分发版本）"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正式環境（發行版本）"
+          }
+        }
+      }
+    },
     "Quality": {
       "localizations": {
         "en": {
@@ -2547,6 +3229,28 @@
         }
       }
     },
+    "Reads newly observed text that Notification Center exposes through Accessibility. Hidden, grouped or brief banners can be missed; this is not a complete Mac notification feed. The test button checks the delivery path without requiring a Mac banner. Connected devices receive an inbox item. Background iOS alerts require a signed iOS build with Push Notifications, notification permission, and matching APNs topic and environment. APNs sends the mirrored title and body through Apple. Keep the .p8 file outside the app and repository; Sill stores only its path.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reads newly observed text that Notification Center exposes through Accessibility. Hidden, grouped or brief banners can be missed; this is not a complete Mac notification feed. The test button checks the delivery path without requiring a Mac banner. Connected devices receive an inbox item. Background iOS alerts require a signed iOS build with Push Notifications, notification permission, and matching APNs topic and environment. APNs sends the mirrored title and body through Apple. Keep the .p8 file outside the app and repository; Sill stores only its path."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "读取通知中心通过辅助功能公开的新通知文本。隐藏、分组或短暂显示的横幅可能被遗漏；这里并非完整的 Mac 通知列表。测试按钮无需 Mac 横幅即可检查传送路径。已连接设备会收到收件箱条目。iOS 后台提醒需要启用推送通知的签名版本、通知权限，以及匹配的 APNs 主题和环境。APNs 通过 Apple 发送镜像通知的标题和正文。请将 .p8 文件保存在 App 和代码仓库之外；Sill 只保存其路径。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "讀取通知中心透過輔助使用公開的新通知文字。隱藏、分組或短暫顯示的橫幅可能被遺漏；這裡並非完整的 Mac 通知列表。測試按鈕無需 Mac 橫幅即可檢查傳送路徑。已連線裝置會收到收件匣項目。iOS 背景提醒需要啟用推播通知的簽署版本、通知權限，以及相符的 APNs 主題和環境。APNs 透過 Apple 傳送鏡像通知的標題和內文。請將 .p8 檔案保存在 App 和程式碼儲存庫之外；Sill 只儲存其路徑。"
+          }
+        }
+      }
+    },
     "Redo": {
       "localizations": {
         "en": {
@@ -2565,6 +3269,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "重做"
+          }
+        }
+      }
+    },
+    "Registered paired devices": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Registered paired devices"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已注册的配对设备"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已註冊的配對裝置"
           }
         }
       }
@@ -2815,6 +3541,28 @@
     "Reveal Log File": {},
     "Router’s internet address": {},
     "Running from": {},
+    "Sandbox (development build)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sandbox (development build)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "沙盒（开发版本）"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "沙盒（開發版本）"
+          }
+        }
+      }
+    },
     "Save": {},
     "Screen Recording": {
       "localizations": {
@@ -2926,6 +3674,28 @@
         }
       }
     },
+    "See the windows you choose on iPhone or iPad, then click, scroll, and type from your device.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "See the windows you choose on iPhone or iPad, then click, scroll, and type from your device."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在 iPhone 或 iPad 上查看你选择的窗口，并从设备上点按、滚动和输入。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在 iPhone 或 iPad 上查看你選擇的視窗，並從裝置上點按、捲動及輸入。"
+          }
+        }
+      }
+    },
     "Select All": {
       "localizations": {
         "en": {
@@ -2970,7 +3740,51 @@
         }
       }
     },
+    "Send Test Notification": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send Test Notification"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "发送测试通知"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "傳送測試通知"
+          }
+        }
+      }
+    },
     "Send audio (beta)": {},
+    "Set up Sill on this Mac": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set up Sill on this Mac"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在这台 Mac 上设置 Sill"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在這部 Mac 上設定 Sill"
+          }
+        }
+      }
+    },
     "Settings…": {
       "localizations": {
         "en": {
@@ -3385,6 +4199,50 @@
         }
       }
     },
+    "The APNs .p8 key cannot be read.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The APNs .p8 key cannot be read."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法读取 APNs .p8 密钥。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法讀取 APNs .p8 金鑰。"
+          }
+        }
+      }
+    },
+    "The APNs .p8 key is not a valid P-256 private key.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The APNs .p8 key is not a valid P-256 private key."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs .p8 密钥不是有效的 P-256 私钥。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs .p8 金鑰不是有效的 P-256 私密金鑰。"
+          }
+        }
+      }
+    },
     "The Mac keeps playing it too": {
       "localizations": {
         "en": {
@@ -3403,6 +4261,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Mac 也會繼續播放聲音"
+          }
+        }
+      }
+    },
+    "The file stays here. Sill stores its path and reads it when signing APNs requests.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The file stays here. Sill stores its path and reads it when signing APNs requests."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文件将保留在原位置。Sill 保存其路径，并在签署 APNs 请求时读取。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "檔案會保留在原位置。Sill 儲存其路徑，並在簽署 APNs 請求時讀取。"
           }
         }
       }
@@ -3457,6 +4337,28 @@
     },
     "This is the Mac’s name.": {},
     "This network. Use it with a VPN into your home network, such as WireGuard on your router.": {},
+    "This test came from your Mac. Live delivery updates Sill’s inbox; configured APNs can also show an iOS alert.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This test came from your Mac. Live delivery updates Sill’s inbox; configured APNs can also show an iOS alert."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这条测试通知来自你的 Mac。实时传送会更新 Sill 收件箱；配置 APNs 后还可显示 iOS 提醒。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這則測試通知來自你的 Mac。即時傳送會更新 Sill 收件匣；設定 APNs 後也可顯示 iOS 提醒。"
+          }
+        }
+      }
+    },
     "Try Again": {},
     "Turn On Remote Access": {
       "localizations": {
@@ -3613,6 +4515,28 @@
       }
     },
     "Visible on your network as": {},
+    "Waiting for Notification Center. The test notification is still available.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for Notification Center. The test notification is still available."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待通知中心。仍可发送测试通知。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待通知中心。仍可傳送測試通知。"
+          }
+        }
+      }
+    },
     "Waiting for a Device": {
       "localizations": {
         "en": {
@@ -3631,6 +4555,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在等候裝置"
+          }
+        }
+      }
+    },
+    "Waiting for the Mac's paired TLS identity.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for the Mac's paired TLS identity."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待 Mac 的配对 TLS 身份。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待 Mac 的配對 TLS 身分。"
           }
         }
       }
@@ -3749,6 +4695,28 @@
       }
     },
     "home.example.net": {},
+    "iOS app topic (bundle ID)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iOS app topic (bundle ID)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iOS App 主题（bundle ID）"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iOS App 主題（bundle ID）"
+          }
+        }
+      }
+    },
     "just now": {
       "localizations": {
         "en": {

@@ -667,6 +667,7 @@ extension StreamClient {
     /// above.
     @discardableResult
     func reconnectIfListed() -> Bool {
+        guard sceneAllowsAutomaticReconnect else { return false }
         reconnectCheck?.cancel()
         reconnectCheck = nil
         guard !connected, !moveUnderWay, var r = reconnect else { return false }

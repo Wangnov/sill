@@ -6,7 +6,7 @@ import StreamProtocol
 /// the Mac changes them (one change, one apply, at most one short restart; Sill.app saves them).
 ///
 /// A panel in the view hierarchy, mirroring the Apps drawer on the trailing edge; not a sheet,
-/// popover or Menu. The client has no system presentation anywhere; sheets and popovers adapt by
+/// popover or Menu. Streaming controls avoid system presentations; sheets and popovers adapt by
 /// size class, which is unknown for the Duo; the layout harness draws a fake Duo screen inside an
 /// iPad window, which a system presentation would escape; and a tall sheet or a flipped popover
 /// could cross the half-folded crease. Its height follows its content; only the middle scrolls,
@@ -533,6 +533,11 @@ struct HostSettingsPanel: View {
     /// fingers would (`sendGesture`: the switch, the Mac's `gestures`, the Desktop first while a window
     /// streams).
     @ViewBuilder private var thisDevice: some View {
+        if let inbox = client.notificationRelay?.inbox {
+            Rows {
+                NotificationInboxButton(inbox: inbox).rowFrame()
+            }
+        }
         Text("This \(device)")
             .font(.footnote.weight(.medium))
             .foregroundStyle(Palette.muted)

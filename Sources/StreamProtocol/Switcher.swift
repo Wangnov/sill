@@ -60,13 +60,25 @@ public struct WindowList: Codable {
     /// pull request #66's `Bool` (never released) does not decode here and becomes an Int as it
     /// rebases.
     public var clipboard: Int?
+    /// Per-connection media pause/resume (kind 200). Nil on older hosts; 1 is this generation.
+    public var mediaSubscription: Int?
+    /// Opt-in notifications over a paired TLS connection (fork kinds 201 and 202).
+    public var notificationMirroring: Int?
 
     public init(macName: String, windows: [WindowInfo], active: StreamSource, launchID: String? = nil,
-                hostVersion: String? = nil, protocol: Int? = nil, gestures: Int? = nil, clipboard: Int? = nil) {
+                hostVersion: String? = nil, protocol: Int? = nil, gestures: Int? = nil, clipboard: Int? = nil,
+                mediaSubscription: Int? = nil, notificationMirroring: Int? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
-        self.clipboard = clipboard
+        self.clipboard = clipboard; self.mediaSubscription = mediaSubscription
+        self.notificationMirroring = notificationMirroring
     }
+}
+
+/// A device's media subscription; a connection starts enabled for older devices.
+public struct MediaSubscription: Codable {
+    public var enabled: Bool
+    public init(enabled: Bool) { self.enabled = enabled }
 }
 
 public struct LaunchApp: Codable {
