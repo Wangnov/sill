@@ -13,7 +13,9 @@ esac
 derived="$root/.build/DerivedData"
 app="$derived/Build/Products/Debug/Sill Development.app"
 binary="$app/Contents/MacOS/Sill"
-log="$root/.build/Sill-Development.log"
+# A checkout may live on a volume the GUI app cannot write yet. Use the app's normal log
+# location, with a separate directory so a development run never shares the installed app's log.
+log="$HOME/Library/Logs/Sill-Development/Sill.log"
 
 development_pids() {
     ps -axww -o pid=,comm= | awk -v executable="$binary" '

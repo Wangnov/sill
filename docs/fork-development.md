@@ -10,7 +10,7 @@ xcodebuild -workspace Sill.xcworkspace -scheme SillMacApp -configuration Debug \
 
 For the daily build/run loop, use `./script/build_and_run.sh` or the Codex Run action. It
 builds into `.build/DerivedData`, stops only the development executable from this checkout,
-and writes its log to `.build/Sill-Development.log`. `--verify` checks that it stays running;
+and writes its log to `~/Library/Logs/Sill-Development/Sill.log`. `--verify` checks that it stays running;
 `--debug` starts LLDB and `--logs` follows that log. Extra arguments go to the app, for example:
 
 ```sh
