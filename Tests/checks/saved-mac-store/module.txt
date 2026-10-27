@@ -1,0 +1,6 @@
+flags: -D DEBUG
+Sources/StreamProtocol/*.swift
+iOSClient/SavedMacs.swift
+iOSClient/SavedMacStore.swift
+iOSClient/ConnectionList.swift
+iOSClient/KeyframeRecovery.swift

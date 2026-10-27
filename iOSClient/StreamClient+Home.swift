@@ -350,9 +350,8 @@ extension StreamClient {
         print("home: connected to \(hostName) over TLS, \(s.macID != nil ? "a saved Mac" : "an open door")")
         #endif
         markConnected(endpoint: s.endpoint, name: hostName)
-        if let id = s.macID, let next = SavedMacs.seenOverTLS([id], in: savedMacs) {
-            savedMacs = next
-            persistSavedMacs()
+        if let id = s.macID {
+            savedMacStore.updateMacs { $0 = SavedMacs.seenOverTLS([id], in: $0) ?? $0 }
         }
         #if DEBUG
         // `-SillOverlayCode <digits>`: Pair This iPad… as the overlay runs it, once, on this session
@@ -400,10 +399,8 @@ extension StreamClient {
         case .removed:
             // Revoked only when the saved Mac's own key answered this session (its connections
             // pinned to it): an open session with another key never revokes the real Mac.
-            if let mac = saved, DiscoveryPolicy.removalRevokes(remote: false, trust: s.home, savedKey: mac.fingerprintData),
-               let next = SavedMacs.revoking(mac.macID, in: savedMacs) {
-                savedMacs = next
-                persistSavedMacs()
+            if let mac = saved, DiscoveryPolicy.removalRevokes(remote: false, trust: s.home, savedKey: mac.fingerprintData) {
+                savedMacStore.updateMacs { $0 = SavedMacs.revoking(mac.macID, in: $0) ?? $0 }
             }
             endAtHome(DiscoveryPolicy.HomeCopy.removed(mac: name, device: Self.deviceWord))
         case .pairingRequired:
@@ -445,10 +442,7 @@ extension StreamClient {
         #if DEBUG
         print("home: \(id) answered with another key; it is paired again with a tap")
         #endif
-        if let next = SavedMacs.markingNewKey(id, in: savedMacs) {
-            savedMacs = next
-            persistSavedMacs()
-        }
+        savedMacStore.updateMacs { $0 = SavedMacs.markingNewKey(id, in: $0) ?? $0 }
     }
 
     private func endAtHome(_ words: String) {
@@ -1001,12 +995,15 @@ extension StreamClient {
                            infoIssuedAt: 0, bonjourName: bonjourName, lastWorked: nil, pairedAt: Date(), method: method,
                            lastConnectedAt: nil, lastRoute: nil, homeTLS: true, revoked: nil)
         if let info { mac = SavedMacs.refreshed(mac, info: info, fingerprint: fingerprint, allowLoopback: Self.keepsLoopback) ?? mac }
-        savedMacs = SavedMacs.adding(mac, to: savedMacs)
-        if let old = replaces {
-            savedMacs = SavedMacs.replacingNewKey(old: old, new: macID, in: savedMacs)
-            if savedMac(old) == nil { carryGroup(from: old, to: macID) }
+        savedMacStore.update {
+            $0.macs = SavedMacs.adding(mac, to: $0.macs)
+            if let old = replaces {
+                $0.macs = SavedMacs.replacingNewKey(old: old, new: macID, in: $0.macs)
+                if !$0.macs.contains(where: { $0.macID == old }) {
+                    $0.groups = ConnectionList.carryingGroup(from: old, to: macID, in: $0.groups)
+                }
+            }
         }
-        persistSavedMacs()
         return macID
     }
 

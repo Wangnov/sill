@@ -163,56 +163,25 @@ extension StreamClient {
         SavedMacs.displayNames(savedMacs)[macID] ?? savedMac(macID)?.name ?? "Mac"
     }
 
-    /// Writes the list, except in a DEBUG run seeded with `-Sill.savedMacs` (for that run alone), and
-    /// shows it.
-    func persistSavedMacs() {
-        storeSavedMacs()
-        recomputeMacs()
-        updateDiscovery()
-    }
-
-    /// Writes the list only (`recomputeMacs` itself writes what it learns of a Mac's door).
-    func storeSavedMacs() {
-        if !savedMacsSeeded { UserDefaults.standard.set(SavedMacs.encode(savedMacs), forKey: SavedMacs.defaultsKey) }
-        pruneSavedPreviews()
-        guard !savedMacsSeeded else { return }
-        let kept = Set(savedMacs.map(\.macID))
-        for macID in macGroups.keys where !kept.contains(macID) { setGroup(nil, for: macID) }
-    }
-
     /// Forget: the record only. The Mac lists this device until it is removed there, and the
     /// status line says so.
     func forget(_ macID: String) {
         let name = savedMac(macID) != nil ? displayName(macID) : (macs.first { $0.macID == macID }?.name ?? "the Mac")
         if reconnect?.macID == macID { reconnect = nil }
-        savedMacs.removeAll { $0.macID == macID }
+        savedMacStore.update {
+            $0.macs.removeAll { $0.macID == macID }
+            $0.groups.removeValue(forKey: macID)
+        }
         savedSightings.since[macID] = nil
         savedSightings.leftAt[macID] = nil
-        setGroup(nil, for: macID)
         removePreview(for: macID)
-        persistSavedMacs()
         status = String(localized: "Forgot \(name). It still lists this \(Self.deviceWord) until you remove it in Sill’s Settings on the Mac.")
     }
 
     // MARK: Connection groups and preview pictures (ConnectionList)
 
     func setGroup(_ group: String?, for macID: String) {
-        storeGroups(ConnectionList.settingGroup(group, for: macID, in: macGroups))
-    }
-
-    /// A record retired for a newer one of the same Mac (SavedMacs.superseding, a re-pairing that
-    /// replaced a record whose Mac has a new key) gives its group to that one; before the list is
-    /// stored, which drops the groups of records no longer saved.
-    func carryGroup(from old: String, to new: String) {
-        storeGroups(ConnectionList.carryingGroup(from: old, to: new, in: macGroups))
-    }
-
-    private func storeGroups(_ next: [String: String]) {
-        guard next != macGroups else { return }
-        macGroups = next
-        if !macGroupsSeeded {
-            UserDefaults.standard.set(ConnectionList.encodeGroups(macGroups), forKey: ConnectionList.groupsKey)
-        }
+        savedMacStore.setGroup(group, for: macID)
     }
 
     /// The connect screen's arrangement (`Sill.connectionStyle`, which ConnectScreen's switch and a saved
@@ -266,7 +235,9 @@ extension StreamClient {
     /// locked. Sill reads it only at launch and when tiles come back, and writes it only for a session
     /// that ended in a window in front, a second at most later, so all happen while the device is unlocked.
     func savePreview(_ image: UIImage, for macID: String) {
-        guard let name = ConnectionList.previewFileName(for: macID) else { return }
+        // A decode can finish after another window forgot this Mac. Consult the shared list at
+        // the write, so that late picture cannot bring back its deleted preview.
+        guard savedMac(macID) != nil, let name = ConnectionList.previewFileName(for: macID) else { return }
         macPreviews[macID] = image
         guard !savedMacsSeeded, let dir = Self.previewsDirectory,
               let data = image.jpegData(compressionQuality: 0.72) else { return }
@@ -282,11 +253,12 @@ extension StreamClient {
 
     func removePreview(for macID: String) {
         macPreviews.removeValue(forKey: macID)
-        guard let dir = Self.previewsDirectory, let name = ConnectionList.previewFileName(for: macID) else { return }
+        guard !savedMacsSeeded, let dir = Self.previewsDirectory, let name = ConnectionList.previewFileName(for: macID) else { return }
         try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
     }
 
     func pruneSavedPreviews() {
+        // The displayed images are window-local; file retention always follows App-owned data.
         let kept = Set(savedMacs.map(\.macID))
         if macPreviews.keys.contains(where: { !kept.contains($0) }) { macPreviews = macPreviews.filter { kept.contains($0.key) } }
         guard !savedMacsSeeded, let dir = Self.previewsDirectory,
@@ -321,20 +293,17 @@ extension StreamClient {
     func startRemote() {
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "SillForgetMacs") {
-            savedMacs = []
+            savedMacStore.updateMacs { $0 = [] }
             DeviceIdentity.forget()
-            persistSavedMacs()
             print("remote: saved Macs and the device key forgotten")
         }
         if UserDefaults.standard.bool(forKey: "SillForgetHomeTLS") {
-            savedMacs = SavedMacs.forgettingHomeTLS(savedMacs)
-            persistSavedMacs()
+            savedMacStore.updateMacs { $0 = SavedMacs.forgettingHomeTLS($0) }
             print("home: homeTLS forgotten on every saved Mac")
         }
         #endif
         if !savedMacs.isEmpty, DeviceIdentity.knownMissing() {
-            savedMacs = []
-            persistSavedMacs()
+            savedMacStore.updateMacs { $0 = [] }
         }
         #if DEBUG
         let d = UserDefaults.standard
@@ -441,9 +410,12 @@ extension StreamClient {
                     #if DEBUG
                     print("remote: \(winner.candidate.key) answered with the key of \(newer.macID), saved after \(macID): \(macID) superseded")
                     #endif
-                    self.savedMacs = SavedMacs.superseding(old: macID, by: newer.macID, proof: winner.candidate.key, in: self.savedMacs)
-                    if self.savedMac(macID) == nil { self.carryGroup(from: macID, to: newer.macID) }
-                    self.persistSavedMacs()
+                    self.savedMacStore.update {
+                        $0.macs = SavedMacs.superseding(old: macID, by: newer.macID, proof: winner.candidate.key, in: $0.macs)
+                        if !$0.macs.contains(where: { $0.macID == macID }) {
+                            $0.groups = ConnectionList.carryingGroup(from: macID, to: newer.macID, in: $0.groups)
+                        }
+                    }
                     if self.reconnect?.macID == macID { self.reconnect?.macID = newer.macID }
                     macID = newer.macID
                     self.hostName = self.displayName(macID)
@@ -526,11 +498,13 @@ extension StreamClient {
         status = String(localized: "Connected to \(hostName)")
         if case .paired = pairing { pairing = .idle }
         resetLiveness()
-        if let id = s.macID, let i = savedMacs.firstIndex(where: { $0.macID == id }) {
-            savedMacs[i].lastWorked = s.candidate?.key ?? savedMacs[i].lastWorked
-            savedMacs[i].lastConnectedAt = Date()
-            savedMacs[i].lastRoute = r.saved
-            persistSavedMacs()
+        if let id = s.macID {
+            savedMacStore.updateMacs {
+                guard let i = $0.firstIndex(where: { $0.macID == id }) else { return }
+                $0[i].lastWorked = s.candidate?.key ?? $0[i].lastWorked
+                $0[i].lastConnectedAt = Date()
+                $0[i].lastRoute = r.saved
+            }
         }
         #if DEBUG
         print("remote: connected to \(hostName) \(r.phrase)")
@@ -620,14 +594,12 @@ extension StreamClient {
         }
         let outcome = GoodbyePolicy.outcome(goodbye, mac: name, device: Self.deviceWord, saved: saved != nil)
         if goodbye?.reason == Goodbye.removed, let mac = saved,
-           DiscoveryPolicy.removalRevokes(remote: s?.route.isRemote == true, trust: s?.home, savedKey: mac.fingerprintData),
-           let next = SavedMacs.revoking(mac.macID, in: savedMacs) {
+           DiscoveryPolicy.removalRevokes(remote: s?.route.isRemote == true, trust: s?.home, savedKey: mac.fingerprintData) {
             // One trust list on the Mac: removed away is removed at home too. The row reads Not
             // paired, and a tap asks (docs/home-pairing-plan.md §7.6). Only a remote session's
             // goodbye gets here with a key (a TLS one at home ends in homeSessionEnded), and a
             // plain session's revokes nothing: it has no key, so anyone could have sent it.
-            savedMacs = next
-            persistSavedMacs()
+            savedMacStore.updateMacs { $0 = SavedMacs.revoking(mac.macID, in: $0) ?? $0 }
         }
         tearDown(status: outcome.text)
         reconnect = outcome.reconnect ? lostReconnect(session: s, saved: saved, name: name, remoteAllowed: outcome.remoteAllowed,
@@ -843,7 +815,7 @@ extension StreamClient {
         }
         macInfo = info
         macInfoVerified = (info, fingerprint)
-        guard let i = savedMacs.firstIndex(where: { $0.macID == info.macID && $0.fingerprintData == fingerprint }) else {
+        guard savedMacs.contains(where: { $0.macID == info.macID && $0.fingerprintData == fingerprint }) else {
             macInfoSaved = false
             return
         }
@@ -857,13 +829,12 @@ extension StreamClient {
             homeInfo.remote(info.issuedAt)
             if first { moveHomeIfListed() }
         }
-        var mac = SavedMacs.refreshed(savedMacs[i], info: info, fingerprint: fingerprint, allowLoopback: Self.keepsLoopback) ?? savedMacs[i]
-        // The Bonjour name of a network or Direct connection to it: how a host without the tag is
-        // still recognised.
-        if case .service(let name, _, _, _)? = endpoint { mac.bonjourName = name }
-        if mac != savedMacs[i] {
-            savedMacs[i] = mac
-            persistSavedMacs()
+        savedMacStore.updateMacs {
+            guard let i = $0.firstIndex(where: { $0.macID == info.macID && $0.fingerprintData == fingerprint }) else { return }
+            var mac = SavedMacs.refreshed($0[i], info: info, fingerprint: fingerprint, allowLoopback: Self.keepsLoopback) ?? $0[i]
+            // A network or Direct session's Bonjour name recognises a host without the tag.
+            if case .service(let name, _, _, _)? = endpoint { mac.bonjourName = name }
+            $0[i] = mac
         }
     }
 
@@ -1162,8 +1133,7 @@ extension StreamClient {
             mac = SavedMacs.refreshed(mac, info: v.info, fingerprint: v.fingerprint, allowLoopback: Self.keepsLoopback) ?? mac
             session?.macID = macID
         }
-        savedMacs = SavedMacs.adding(mac, to: savedMacs)
-        persistSavedMacs()
+        savedMacStore.updateMacs { $0 = SavedMacs.adding(mac, to: $0) }
         pairing = .paired(displayName(macID))
         #if DEBUG
         print("remote: paired with \(name) (\(macID)), proof_M checked, pin saved\(overlay ? (sameMac ? "; this session's Mac" : "; not this session's Mac") : "")")

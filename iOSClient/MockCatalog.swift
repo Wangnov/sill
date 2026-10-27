@@ -13,6 +13,13 @@ import StreamProtocol
 /// None of this exists in a Release build.
 enum MockCatalog {
 
+    /// Mock windows own in-memory device data, apart from the App's live windows. Keep explicit
+    /// launch seeds, with empty seeds otherwise, so a mock menu cannot persist fake groups or prune
+    /// pictures belonging to the installation's real paired Macs.
+    private static func savedMacStore() -> SavedMacStore {
+        SavedMacStore(arguments: CommandLine.arguments + ["-" + SavedMacs.defaultsKey, "[]", "-" + ConnectionList.groupsKey, "{}"])
+    }
+
     // MARK: - The catalog
 
     /// Bundle ID → the colour the design boards give that app's icon.
@@ -58,7 +65,7 @@ enum MockCatalog {
     /// drawer opens by itself — which the harness asks for with `-SillActive none`.
     static func client(active: StreamSource = .window(102), settings: SettingsCase = .default,
                        menus: MenuCase? = .code, pointer: String? = nil, pencilPointer: Bool = false) -> StreamClient {
-        let client = StreamClient()
+        let client = StreamClient(savedMacStore: savedMacStore())
         // Never browses, not even after the panel's Disconnect, when a remembered Mac would look
         // missing from a network the mock never looked at.
         client.mockDiscovery = true
@@ -567,7 +574,7 @@ enum MockCatalog {
     }
 
     static func connectClient(_ c: ConnectCase) -> StreamClient {
-        let client = StreamClient()
+        let client = StreamClient(savedMacStore: savedMacStore())
         client.mockDiscovery = true
         client.setStatus(StreamClient.lookingOnNetwork, kind: .searchingNetwork)
         /// A row as `recomputeMacs` makes it: Direct only for a Direct row. No wired interface: the
@@ -715,7 +722,9 @@ enum MockCatalog {
             let second = remote("Mac mini (2)", "0123456789ABCDEF")
             client.macs = [mini, studio, home("Office iMac", .wired, saved: false), miniRemote, pro, second]
             if client.macGroups.isEmpty {
-                client.macGroups = ["HOMEPAIRING8": "Home", "HOMEPAIRING6": "Home", "A3C5HR4RBV67YR21": "Work"]
+                client.savedMacStore.update {
+                    $0.groups = ["HOMEPAIRING8": "Home", "HOMEPAIRING6": "Home", "A3C5HR4RBV67YR21": "Work"]
+                }
             }
             // `-SillVideoSize WxH`: the pictures at that shape (a 16:9 Desktop, a 2.39:1 ultrawide one), each
             // 320 pt wide as a session's end keeps it, so a photo shows a tile keeping to its cell.

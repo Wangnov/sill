@@ -3,11 +3,15 @@ import Network
 import StreamProtocol
 
 struct ContentView: View {
-    @StateObject private var client = StreamClient()
+    @StateObject private var client: StreamClient
     /// Tells the host what this device sees, once a second while connected. Also covers the DEBUG
     /// harness's `-SillLive 1` session, which runs on this same client.
     @StateObject private var statsReporter = ClientStatsReporter()
     @Environment(\.scenePhase) private var scenePhase
+
+    init(savedMacStore: SavedMacStore) {
+        _client = StateObject(wrappedValue: StreamClient(savedMacStore: savedMacStore))
+    }
 
     var body: some View {
         root.onAppear { statsReporter.attach(to: client) }

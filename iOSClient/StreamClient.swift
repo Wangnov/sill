@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import Network
 import QuartzCore
 import UIKit
@@ -185,11 +186,12 @@ final class StreamClient: ObservableObject {
     /// its first window list, with `connected`.
     @Published var remoteRoute: RemoteRoute?
 
-    // Remote access (StreamClient+Remote.swift). Published on main; the DEBUG harness seeds them.
-    /// The Macs this device paired with (SavedMacs), persisted in `SavedMacs.defaultsKey`.
-    @Published var savedMacs: [SavedMac] = []
-    /// Custom group names assigned to saved Macs (ConnectionList), persisted in `ConnectionList.groupsKey`.
-    @Published var macGroups: [String: String] = [:]
+    // Paired-device data is App-owned. These reads always use the current shared data, including
+    // inside a network callback; this window's discovery and session state stays on this client.
+    let savedMacStore: SavedMacStore
+    private var savedMacChanges: AnyCancellable?
+    var savedMacs: [SavedMac] { savedMacStore.snapshot.macs }
+    var macGroups: [String: String] { savedMacStore.snapshot.groups }
     /// Last-stream preview pictures for saved Macs (ConnectionList), stored in Caches/SillPreviews: those
     /// shown, which is none while the list shows (the files stay: `syncPreviews`).
     @Published var macPreviews: [String: UIImage] = [:]
@@ -992,31 +994,17 @@ final class StreamClient: ObservableObject {
     private var moveFlushScheduled = false
 
     /// DEBUG: saved Macs seeded for this run by `-Sill.savedMacs '<JSON>'`; nothing is written back.
-    private(set) var savedMacsSeeded = false
-    /// DEBUG: Mac groups seeded for this run by `-Sill.macGroups '<JSON>'`; nothing is written back.
-    private(set) var macGroupsSeeded = false
+    var savedMacsSeeded: Bool { savedMacStore.savedMacsSeeded }
 
-    init() {
+    init(savedMacStore: SavedMacStore) {
+        self.savedMacStore = savedMacStore
         // The hello is built here, on the main thread: it reads UIDevice (the device's name), which
         // the network queue, where connections become ready and send it, must not be first to touch.
         _ = Self.helloPayload
         #if DEBUG
-        // Read from the command line itself: the argument domain drops a value that starts like a
-        // property list but is not one, and JSON's "[" is such a start.
         let arguments = CommandLine.arguments
-        if let i = arguments.firstIndex(of: "-" + SavedMacs.defaultsKey), i + 1 < arguments.count {
-            savedMacs = SavedMacs.decode(arguments[i + 1])
-            savedMacsSeeded = true
-        } else {
-            savedMacs = SavedMacs.decode(UserDefaults.standard.string(forKey: SavedMacs.defaultsKey))
-        }
-        if let i = arguments.firstIndex(of: "-" + ConnectionList.groupsKey), i + 1 < arguments.count {
-            macGroups = ConnectionList.decodeGroups(arguments[i + 1])
-            macGroupsSeeded = true
-        } else {
-            macGroups = ConnectionList.decodeGroups(UserDefaults.standard.string(forKey: ConnectionList.groupsKey))
-        }
-        // A bracketed IPv6 address starts so too (`-SillConnect '[::1]:P'`): an address argument
+        // The argument domain can drop a bracketed IPv6 address (`-SillConnect '[::1]:P'`), as it
+        // starts like a property list. An address argument
         // the argument domain dropped goes into the registration domain (this run's memory, never
         // saved), where every reader of UserDefaults finds it. Its readers are this client's
         // methods, and statics first touched once it exists, so this runs before any of them.
@@ -1025,9 +1013,6 @@ final class StreamClient: ObservableObject {
                   let i = arguments.firstIndex(of: "-" + key), i + 1 < arguments.count else { continue }
             UserDefaults.standard.register(defaults: [key: arguments[i + 1]])
         }
-        #else
-        savedMacs = SavedMacs.decode(UserDefaults.standard.string(forKey: SavedMacs.defaultsKey))
-        macGroups = ConnectionList.decodeGroups(UserDefaults.standard.string(forKey: ConnectionList.groupsKey))
         #endif
         syncPreviews(to: connectionStyle)
         // Back from the background: the pings stopped while the app was suspended, which is no loss;
@@ -1046,6 +1031,19 @@ final class StreamClient: ObservableObject {
         sound.onRouteMuted = { [weak self] in self?.headphonesOut() }
         // The picture's window going away and coming back (KeyframeRecovery).
         observePictureActivation()
+        // Subscribe after initialization and skip @Published's immediate initial value. Deliver
+        // later on main: @Published sends before assigning, and recomputeMacs can itself learn TLS.
+        // The store suppresses equal edits, so that second look settles instead of feeding back.
+        savedMacChanges = savedMacStore.$snapshot.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
+            guard let self else { return }
+            self.objectWillChange.send()
+            if let verified = self.macInfoVerified {
+                self.macInfoSaved = self.savedMac(verified.info.macID)?.fingerprintData == verified.fingerprint
+            }
+            self.pruneSavedPreviews()
+            self.recomputeMacs()
+            self.updateDiscovery()
+        }
     }
 
     // MARK: - The picture's recovery
@@ -1427,9 +1425,8 @@ final class StreamClient: ObservableObject {
         // A saved Mac seen with `p` has a door that speaks TLS: remembered first, so a row of it
         // without `p` (a replayed tag, or an older Sill.app put back) reads "Update Sill" at once.
         let seenTLS = Set(rows.compactMap(record).filter { $0.door != .plain }.compactMap { SavedMacs.recognize(tag: $0.tag, in: savedMacs) })
-        if let marked = SavedMacs.seenOverTLS(seenTLS, in: savedMacs) {
-            savedMacs = marked
-            storeSavedMacs()
+        if SavedMacs.seenOverTLS(seenTLS, in: savedMacs) != nil {
+            savedMacStore.updateMacs { $0 = SavedMacs.seenOverTLS(seenTLS, in: $0) ?? $0 }
             #if DEBUG
             print("home: \(seenTLS.sorted()) seen with p: never dialed plain again")
             #endif
@@ -2567,9 +2564,8 @@ final class StreamClient: ObservableObject {
             session?.home = homeMoveTrust
             session?.row = homeMoveRow
             session?.endpoint = c.endpoint
-            if let id = session?.macID, let next = SavedMacs.seenOverTLS([id], in: savedMacs) {
-                savedMacs = next
-                persistSavedMacs()
+            if let id = session?.macID {
+                savedMacStore.updateMacs { $0 = SavedMacs.seenOverTLS([id], in: $0) ?? $0 }
             }
             remoteRoute = nil
             sound.setAway(false)   // the jitter cover takes home's bounds, and nothing else resets (rules 2 and 7)
