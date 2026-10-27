@@ -1037,6 +1037,11 @@ final class StreamClient: ObservableObject {
         savedMacChanges = savedMacStore.$snapshot.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
             guard let self else { return }
             self.objectWillChange.send()
+            #if DEBUG
+            // MockCatalog owns its rows and pictures, with fixture IDs rather than paired records.
+            // Refresh its group UI, but do not prune those pictures against the mock's empty store.
+            if self.mockDiscovery { return }
+            #endif
             if let verified = self.macInfoVerified {
                 self.macInfoSaved = self.savedMac(verified.info.macID)?.fingerprintData == verified.fingerprint
             }
