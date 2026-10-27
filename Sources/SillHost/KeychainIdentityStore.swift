@@ -20,7 +20,7 @@ import Security
 ///   profile embedded in the build (Scripts/make-app.sh --release, docs/release-checklist.md);
 ///   IdentityStorePlan picks it only when the running binary actually holds the entitlement.
 ///
-/// The items, in either keychain:
+/// The default items, in either keychain (an explicit namespace replaces the service and key tag):
 /// - The key: a permanent P-256 private key, application tag `me.saffer.sill.remote.host-key`,
 ///   label "Sill Remote Access", looked up by its tag. Only the private key is stored; the public
 ///   one is derived from it.
@@ -67,10 +67,18 @@ package final class KeychainIdentityStore: IdentityStore {
 
     /// The data-protection access group, or nil for the legacy login keychain. Immutable.
     let accessGroup: String?
+    private let itemService: String
+    private let keyApplicationTag: Data
     private var dataProtection: Bool { accessGroup != nil }
 
     /// `accessGroup` nil is the legacy login keychain; a group name is the data-protection keychain.
-    package init(accessGroup: String? = nil) { self.accessGroup = accessGroup }
+    /// An explicit namespace gives a fork its own identity; upstream items are never migrated.
+    /// Without one, the original service and key tag remain unchanged.
+    package init(accessGroup: String? = nil, namespace: String? = nil) {
+        self.accessGroup = accessGroup
+        self.itemService = namespace ?? Self.service
+        self.keyApplicationTag = namespace.map { Data("\($0).host-key".utf8) } ?? Self.keyTag
+    }
 
     package var summary: String {
         guard let accessGroup else { return "in the login keychain" }
@@ -95,7 +103,7 @@ package final class KeychainIdentityStore: IdentityStore {
     package func loadOrCreateKey() throws -> SecKey {
         var query: [String: Any] = [
             kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: Self.keyTag,
+            kSecAttrApplicationTag as String: keyApplicationTag,
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
             kSecMatchLimit as String: kSecMatchLimitOne,
@@ -117,7 +125,7 @@ package final class KeychainIdentityStore: IdentityStore {
             kSecAttrKeySizeInBits as String: 256,
             kSecPrivateKeyAttrs as String: [
                 kSecAttrIsPermanent as String: true,
-                kSecAttrApplicationTag as String: Self.keyTag,
+                kSecAttrApplicationTag as String: keyApplicationTag,
                 kSecAttrLabel as String: Self.label,
             ] as [String: Any],
         ]
@@ -185,7 +193,7 @@ package final class KeychainIdentityStore: IdentityStore {
     private func read(_ account: String) throws -> Data? {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
+            kSecAttrService as String: itemService,
             kSecAttrAccount as String: account,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecReturnData as String: true,
@@ -203,7 +211,7 @@ package final class KeychainIdentityStore: IdentityStore {
     private func write(_ data: Data, account: String, label: String) throws {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
+            kSecAttrService as String: itemService,
             kSecAttrAccount as String: account,
         ]
         query.merge(scope()) { _, new in new }

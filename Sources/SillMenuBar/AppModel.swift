@@ -185,18 +185,21 @@ final class AppModel {
         if dir != nil, case .testDirectory = choice {} else if dir != nil {
             print("SILL_TEST_REMOTE_DIR ignored: only a test host takes it (one that does not advertise and is not Sill.app itself).")
         }
+        // Only an explicitly configured fork gets a separate identity; the original app keeps its
+        // existing keychain items and pairings. No identity is migrated between namespaces.
+        let namespace = Bundle.main.object(forInfoDictionaryKey: "SillIdentityNamespace") as? String
         switch choice {
         case .dataProtection(let group):
             // The strong keychain: no other process can pre-create or read these items. Logged so a
             // release build can be confirmed hardened (and Noah's on-device pass can read it back).
             print("Remote access: the identity is in the data-protection keychain (access group \(group)).")
-            return KeychainIdentityStore(accessGroup: group)
+            return KeychainIdentityStore(accessGroup: group, namespace: namespace)
         case .legacy:
             // No keychain-access-groups entitlement (a development build, or a release with no
             // embedded provisioning profile): the login keychain, the profile-free fallback. Said in
             // the log so a build that should have hardened but did not is visible.
             print("Remote access: the identity is in the login keychain (no keychain-access-groups entitlement — a development build, or a release with no embedded provisioning profile; docs/keychain-plan.md).")
-            return KeychainIdentityStore()
+            return KeychainIdentityStore(namespace: namespace)
         case .memory:
             return MemoryIdentityStore()
         case .testDirectory(let path):
