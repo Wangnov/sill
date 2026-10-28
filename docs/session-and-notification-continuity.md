@@ -363,8 +363,29 @@ entire validated list or none of it.
 
 The new native Mac app builds and all 61 local check suites pass, including 41 source/pipe checks.
 A subsequent batch live run received 26 source callbacks but imported no AX events after the Mac
-locked; it does not establish full capture coverage. These runs verify the source/store path,
-not the freshly signed app's permissions, TLS icon presentation, or real iPhone/APNs delivery.
+locked; that run does not establish full capture coverage.
+
+After unlocking and registering the frozen native build's own Accessibility and Full Disk Access,
+commit `32d3385` completed an integrated run on the same Mac. All three collection channels reported
+connected. The sender submitted nine requests representing eight historical deliveries and seven
+final request IDs. Sill archived **8/8** distinct events: seven ultimately bound to database rows,
+and the replaced original recovered from the exact log metadata, with **zero unknown sources**.
+The original retained its ID, title, subtitle, body and observed date across source enrichment
+(sequence 233 to 238); the read-only archive sampler observed the correction about **6.23 seconds**
+after first observing the unknown event. It remained unbound to a database occurrence.
+
+A disposable paired TLS client then received **8/8** final events, including that corrected original,
+and eight valid **64 × 64 PNG** source-icon frames. The sender has no custom icon, so this verifies
+registered-app icon lookup and transport, not visual fidelity for a distinctive app icon or iOS UI.
+Replay is monotonic final-state recovery; its sequence gaps do not imply missing final events or
+prove replay of every intermediate revision. No APNs provider or real iPhone participated.
+
+The temporary pair, credentials, eight synthetic archive events and fixture source mappings were
+removed. The other nineteen archive events retained identical IDs, sequences and payload hashes.
+The original phone pair remained, and the test sender's notification permission and pairing-window
+screen-sharing option were restored off. The frozen build stayed in use. The commit's
+[CI run](https://github.com/Wangnov/sill/actions/runs/40640399733) passed all build/check steps,
+including native Mac and arm64 iOS simulator builds; the separate mutation job was skipped.
 
 The repository includes separate checks for the distinct parts of this feature:
 
