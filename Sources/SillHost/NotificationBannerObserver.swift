@@ -8,13 +8,17 @@ private struct BannerAXElement: @unchecked Sendable {
 private struct BannerAXEvent: @unchecked Sendable {
     let node: BannerAXElement
     let observer: AXObserver
+    let originOnly: Bool
 }
 
 private func notificationBannerCallback(_ observer: AXObserver, _ element: AXUIElement,
                                         _ notification: CFString, _ context: UnsafeMutableRawPointer?) {
     guard let context else { return }
     let owner = Unmanaged<NotificationBannerObserver>.fromOpaque(context).takeUnretainedValue()
-    let event = BannerAXEvent(node: BannerAXElement(value: element), observer: observer)
+    // Focus changes can reopen a retained list. Recover origin without importing old local mail.
+    let event = BannerAXEvent(node: BannerAXElement(value: element), observer: observer,
+        originOnly: (notification as String) == kAXFocusedWindowChangedNotification
+            || (notification as String) == kAXMainWindowChangedNotification)
     Task { @MainActor [weak owner] in owner?.received(event) }
 }
 
@@ -41,7 +45,8 @@ final class NotificationBannerObserver {
 
     private static let bundleID = "com.apple.notificationcenterui"
     private static let notifications = [kAXLayoutChangedNotification, kAXCreatedNotification,
-                                        kAXWindowCreatedNotification]
+                                        kAXWindowCreatedNotification, kAXFocusedWindowChangedNotification,
+                                        kAXMainWindowChangedNotification]
     private let reader = NotificationBannerAXReader()
     private var observer: AXObserver?
     private var application: AXUIElement?
@@ -49,8 +54,8 @@ final class NotificationBannerObserver {
     private var generation = 0
     private var maintenance: Task<Void, Never>?
     private var reads: [CFHashCode: Task<Void, Never>] = [:]
-    private var dirty: [CFHashCode: BannerAXElement] = [:]
-    private var retries: [CFHashCode: (id: UUID, task: Task<Void, Never>)] = [:]
+    private var dirty: [CFHashCode: (node: BannerAXElement, originOnly: Bool)] = [:]
+    private var retries: [CFHashCode: (id: UUID, task: Task<Void, Never>, originOnly: Bool)] = [:]
     private var lastStatus: Status?
     private var lastFields: [String: NotificationBannerParser.Fields] = [:]
     private var iPhoneOrigins: Set<String> = []
@@ -116,6 +121,9 @@ final class NotificationBannerObserver {
         observer = created
         CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(created), .commonModes)
         status(.running(registrationErrors: errors))
+        // One origin-only catch-up covers existing iPhone cards without importing old local
+        // notifications before the collector establishes its first database baseline.
+        requestRead(BannerAXElement(value: app), originOnly: true)
     }
 
     private func disconnect() {
@@ -149,7 +157,9 @@ final class NotificationBannerObserver {
         var sourcePID: pid_t = 0
         guard AXUIElementGetPid(node.value, &sourcePID) == .success, sourcePID == pid else { return }
         let key = CFHash(node.value)
-        requestRead(node)
+        requestRead(node, originOnly: event.originOnly)
+        // Keep an existing live banner's finite retries when a focus rescan joins the same burst.
+        let retryOriginOnly = event.originOnly && (retries[key]?.originOnly ?? true)
         retries[key]?.task.cancel()
         let id = UUID()
         let current = generation
@@ -159,22 +169,26 @@ final class NotificationBannerObserver {
             for delay in [0.1, 0.2, 0.3] {
                 do { try await Task.sleep(for: .seconds(delay)) } catch { return }
                 guard let self, self.generation == current else { return }
-                self.requestRead(node)
+                self.requestRead(node, originOnly: retryOriginOnly)
             }
             if let self, self.retries[key]?.id == id { self.retries.removeValue(forKey: key) }
         }
-        retries[key] = (id, task)
+        retries[key] = (id, task, retryOriginOnly)
     }
 
-    private func requestRead(_ node: BannerAXElement) {
+    private func requestRead(_ node: BannerAXElement, originOnly: Bool) {
         let key = CFHash(node.value)
-        if reads[key] != nil { dirty[key] = node; return }
+        if reads[key] != nil {
+            // A live callback in the same burst must not be weakened by an origin-only rescan.
+            dirty[key] = (node, originOnly && (dirty[key]?.originOnly ?? true))
+            return
+        }
         // Bursts are coalesced by callback element, with a small bound on outstanding IPC work.
         guard reads.count < 32 else { return }
         let current = generation
         let sourcePID = pid
         reads[key] = Task { [weak self, reader] in
-            let observations = await reader.read(node, pid: sourcePID)
+            let observations = await reader.read(node, pid: sourcePID, originOnly: originOnly)
             guard let self, !Task.isCancelled, self.generation == current else { return }
             self.reads.removeValue(forKey: key)
             for observation in observations {
@@ -182,7 +196,9 @@ final class NotificationBannerObserver {
                 self.accept(observation)
             }
             guard self.generation == current else { return }
-            if let next = self.dirty.removeValue(forKey: key) { self.requestRead(next) }
+            if let next = self.dirty.removeValue(forKey: key) {
+                self.requestRead(next.node, originOnly: next.originOnly)
+            }
         }
     }
 
@@ -218,12 +234,13 @@ private final class NotificationBannerAXReader: @unchecked Sendable {
         var isCancelled: Bool { lock.withLock { cancelled } }
     }
 
-    func read(_ node: BannerAXElement, pid: pid_t) async -> [NotificationBannerObservation] {
+    func read(_ node: BannerAXElement, pid: pid_t, originOnly: Bool) async -> [NotificationBannerObservation] {
         let cancellation = Cancellation()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 queue.async {
-                    continuation.resume(returning: Read(pid: pid, cancellation: cancellation).run(node.value))
+                    continuation.resume(returning: Read(pid: pid, cancellation: cancellation,
+                        originOnly: originOnly).run(node.value))
                 }
             }
         } onCancel: { cancellation.cancel() }
@@ -232,11 +249,16 @@ private final class NotificationBannerAXReader: @unchecked Sendable {
     private final class Read {
         let pid: pid_t
         let cancellation: Cancellation
+        let originOnly: Bool
         let deadline = ProcessInfo.processInfo.systemUptime + 0.15
         var remaining = 240
         var observations: [NotificationBannerObservation] = []
         var found: Set<String> = []
-        init(pid: pid_t, cancellation: Cancellation) { self.pid = pid; self.cancellation = cancellation }
+        init(pid: pid_t, cancellation: Cancellation, originOnly: Bool) {
+            self.pid = pid
+            self.cancellation = cancellation
+            self.originOnly = originOnly
+        }
         var available: Bool {
             !cancellation.isCancelled && remaining > 0 && ProcessInfo.processInfo.systemUptime < deadline
         }
@@ -261,7 +283,7 @@ private final class NotificationBannerAXReader: @unchecked Sendable {
                 guard v.count == 3 else { break }
                 if (v[0] as? String) == kAXGroupRole,
                    let id = v[1] as? String, let uuid = NotificationBannerParser.normalizedUUID(id) {
-                    readGroup(ancestor, uuid: uuid)
+                    readGroup(ancestor, uuid: uuid, originOnly: originOnly)
                     return observations
                 }
                 if (v[0] as? String) == kAXApplicationRole { break }
@@ -270,26 +292,44 @@ private final class NotificationBannerAXReader: @unchecked Sendable {
                 if CFEqual(parent, ancestor) { break }
                 ancestor = parent
             }
-            // LayoutChanged can name the list's scroll area instead of one group. Search only
-            // that callback subtree, never the application's AXWindows or an unrelated widget tree.
-            findGroups(node, depth: 0)
+            // LayoutChanged can name the list or application instead of one group. An application
+            // callback reads only that process's current children/windows, under the same budget.
+            // It only recovers iPhone origin; importing an old local list could bypass DB baseline.
+            findGroups(node, depth: 0, originOnly: originOnly)
             return observations
         }
 
-        func findGroups(_ node: AXUIElement, depth: Int) {
+        func findGroups(_ node: AXUIElement, depth: Int, originOnly: Bool) {
             guard depth < 10, available else { return }
             let v = values(node, [kAXRoleAttribute, kAXIdentifierAttribute, kAXChildrenAttribute])
             guard v.count == 3 else { return }
+            if (v[0] as? String) == kAXMenuBarRole { return }
             if (v[0] as? String) == kAXGroupRole,
                let id = v[1] as? String, let uuid = NotificationBannerParser.normalizedUUID(id) {
-                readGroup(node, uuid: uuid)
+                readGroup(node, uuid: uuid, originOnly: originOnly)
                 return
             }
-            if (v[0] as? String) == kAXApplicationRole { return }
-            for child in v[2] as? [AXUIElement] ?? [] { findGroups(child, depth: depth + 1) }
+            if (v[0] as? String) == kAXApplicationRole {
+                guard depth == 0 else { return }
+                let children = v[2] as? [AXUIElement] ?? []
+                let windows = values(node, [kAXWindowsAttribute]).first as? [AXUIElement] ?? []
+                var roots: [AXUIElement] = []
+                for candidate in children + windows {
+                    guard available else { break }
+                    if !roots.contains(where: { CFEqual($0, candidate) }) { roots.append(candidate) }
+                }
+                for root in roots {
+                    guard available else { break }
+                    findGroups(root, depth: depth + 1, originOnly: true)
+                }
+                return
+            }
+            for child in v[2] as? [AXUIElement] ?? [] {
+                findGroups(child, depth: depth + 1, originOnly: originOnly)
+            }
         }
 
-        func readGroup(_ group: AXUIElement, uuid: String) {
+        func readGroup(_ group: AXUIElement, uuid: String, originOnly: Bool) {
             guard found.insert(uuid).inserted else { return }
             var lines: [NotificationBannerParser.Line] = []
             var complete = true
@@ -310,6 +350,7 @@ private final class NotificationBannerAXReader: @unchecked Sendable {
             // Match against the separately read full body so message text cannot impersonate it.
             let description = values(group, [kAXDescriptionAttribute]).first as? String ?? ""
             let fromIPhone = NotificationBannerParser.isFromIPhone(groupMetadata: [description], body: fields.body)
+            guard !originOnly || fromIPhone else { return }
             observations.append(.init(sourceUUID: uuid, title: fields.title, subtitle: fields.subtitle,
                                       body: fields.body, observedAt: Date().timeIntervalSince1970,
                                       displayAppName: fields.displayAppName, isFromIPhone: fromIPhone))

@@ -94,3 +94,7 @@ continues independently of an active iPhone Mirroring screen session; a screen c
 does not diagnose its notification channel. On this macOS build, its switch is also reachable via
 General → AirDrop & Continuity → Notifications & Live Activities. Native Mac control notifications,
 including a body ending in the iPhone-origin wording, reached the phone once each.
+The observer also checks an already visible list for iPhone origin on startup and window focus
+changes; these scans cannot import old local notifications. A 2026-10-29 device check confirmed
+one new marked fixture in the iPhone inbox, but it was absent from the Mac's visible list, so the
+complete reverse-path exclusion is still not a passed device check.

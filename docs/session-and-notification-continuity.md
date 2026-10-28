@@ -106,8 +106,8 @@ reuse, ambiguous matches and source visibility limits can still produce duplicat
 the alias is a conservative correlation, not a universal exactly-once guarantee. An accepted APNs
 request for an event is not rearmed when the database enriches that same event.
 
-AX-only events are archived and synchronized over paired TLS immediately, but do not create
-APNs outbox work until their posting app is identified. The retained database is authoritative.
+AX-only events are archived immediately, but neither paired TLS nor APNs forwards them until
+their posting app is identified and passes the source gate. The retained database is authoritative.
 On the tested macOS 27 build, a narrow `usernoted` log stream provides two levels of evidence:
 
 - `Delivering` and `Presenting` records carry an app bundle ID and eight-character UUID prefix.
@@ -150,6 +150,13 @@ the separately captured full body, so the same wording inside a message cannot e
 Empty bodies and unverified reordered templates remain unclassified; this is not a universal
 origin API. The normal source gate still applies to those records. No new setting or wire field
 is introduced for this automatic exclusion.
+
+Registration, focused/main-window changes and application-root callbacks can recover origin from
+an already visible notification list. Those additional scans accept only confirmed iPhone origins:
+they must not import old local notifications before the database baseline. Live banner callbacks
+keep priority when reads or retries coalesce. Application-root traversal merges current children
+and windows, skips the menu bar, and retains the existing time, depth and attribute-call budgets.
+There is no periodic full-tree scan or notification-content diagnostic in the installed app.
 
 These log messages are private OS output, not a supported Apple notification API. Their absence,
 redaction or a changed format can leave the event unknown. The optional stream runs only while
@@ -488,8 +495,13 @@ The iPhone-origin loop-prevention change has not yet completed a live end-to-end
 Mac. An earlier screen-mirroring timeout was incorrectly treated as the notification prerequisite:
 Apple's notification syncing continues without an active screen session, including when the phone
 is not nearby. The independent notification switch was found off under General → AirDrop &
-Continuity → Notifications & Live Activities. Enabling it temporarily and sending a marked iOS
-APNs did not yet produce an observed Mac reflection; that absence is not a filtering pass.
+Continuity → Notifications & Live Activities. The user later supplied a screenshot of marked
+iPhone notifications and confirmed it came from this Mac mini. On 2026-10-29, the opened Mac list
+was readable through AX, and removing menu traversal kept the root scan within its budget.
+However, a fresh marked APNs fixture arrived once in the phone inbox but was absent at the top
+of the Mac list, as confirmed by the user; no matching archived event or origin exclusion was
+observed. The earlier screenshot and this later result do not establish the cause of that missing
+reflection. The complete reflection-and-exclusion check remains pending.
 Native Mac control notifications, including one whose body ends with the localized origin wording,
 reached the actual phone once each after foreground history replay. That control proves normal
 delivery and guards against text-based false positives; it does not prove the reverse Apple path.
