@@ -462,8 +462,8 @@ The repository includes separate checks for the distinct parts of this feature:
 Synthetic socket checks can verify per-viewer pause, all-viewer idle, media resume, bounded socket
 retention and reconnect without a device. Successful builds, fixture checks and a read-only
 inspection of this Mac's retained store establish different facts. The app's own Full Disk Access
-permission was exercised in the native run above; the capture-to-phone path must still be
-validated using the actual signed builds.
+permission was exercised in the native run above, but those earlier checks did not validate
+the capture-to-phone path. The subsequent signed-device observations are recorded below.
 
 On 2026-10-28, the signed iPhone showed a cached Claude source icon as the communication avatar
 with a small Sill badge for a marked APNs fixture. A nonempty subtitle remained visible in the
@@ -472,6 +472,16 @@ resumed, newly captured ChatGPT notifications also displayed their source avatar
 observations are separate from lifecycle recovery, notification-tap and locked-presentation
 acceptance. Apple accepting a push is not proof of device display; record those results separately.
 The system-store retention/schema limits above remain even after device tests pass.
+
+A later controlled run on the same date used a separate macOS notification sender with a
+magenta/yellow icon. Its first notification reached iPhone with the Sill fallback before that
+new source's icon had synchronized. After one paired foreground connection, the second real
+system notification displayed the source avatar and Sill badge on the phone's Home Screen and
+in Notification Center. The host had stopped capture/audio and disconnected TLS. Each run had
+one accepted APNs attempt and one matching phone inbox entry after reconnect/replay, with the
+event ID, source bundle, text, timestamp and history sequence preserved. The fallback alert's
+tap opened the inbox; avatar-alert tap and locked-screen presentation were not separately
+established by this controlled run.
 
 Platform references: [iOS background limits](https://developer.apple.com/forums/thread/685525),
 [APNs server setup](https://developer.apple.com/documentation/usernotifications/setting-up-a-remote-notification-server),
