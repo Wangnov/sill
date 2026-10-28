@@ -58,6 +58,7 @@ final class NotificationHistoryStore {
                 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS source_seen (source_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, event_id TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS archive (event_id TEXT PRIMARY KEY, sequence INTEGER NOT NULL UNIQUE, event BLOB NOT NULL);
+                CREATE TABLE IF NOT EXISTS notification_alias (uuid TEXT PRIMARY KEY, event_id TEXT NOT NULL, source_id TEXT);
                 CREATE TABLE IF NOT EXISTS push_outbox (
                     fingerprint TEXT NOT NULL, event_id TEXT NOT NULL, sequence INTEGER NOT NULL,
                     state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, next_attempt REAL NOT NULL DEFAULT 0,
@@ -81,12 +82,37 @@ final class NotificationHistoryStore {
     func ingest(_ snapshot: NotificationStoreSnapshot, fingerprints: [String]) throws -> [MirroredNotification] {
         try transaction {
             let baseline = try scalarText("SELECT value FROM metadata WHERE key='baseline'") == nil
+            var occurrences: [String: Set<String>] = [:]
+            for record in snapshot.records {
+                if let uuid = sourceUUID(in: record.sourceID) { occurrences[uuid, default: []].insert(record.sourceID) }
+            }
             var added: [MirroredNotification] = []
             for record in snapshot.records {
                 let previous = try scalarText("SELECT fingerprint FROM source_seen WHERE source_id=?", [.text(record.sourceID)])
+                let previousID = try scalarText("SELECT event_id FROM source_seen WHERE source_id=?", [.text(record.sourceID)])
+                let uuid = sourceUUID(in: record.sourceID)
+                let alias = try uuid.flatMap { try notificationAlias(uuid: $0) }
+                // An existing source occurrence keeps its historical ID. Only one exact UUID
+                // candidate may claim a banner; multiple delivery times cannot be disambiguated
+                // from AX's UUID alone, so retain their independent database events without guessing.
+                let claimsBanner = previousID == nil && alias != nil && alias?.sourceID == nil
+                    && uuid.map { occurrences[$0]?.count == 1 } == true
+                let eventID = previousID ?? (claimsBanner ? alias!.eventID : record.event.id)
+                if let uuid {
+                    if claimsBanner {
+                        try execute("UPDATE notification_alias SET source_id=? WHERE uuid=? AND source_id IS NULL",
+                                    [.text(record.sourceID), .text(uuid)])
+                    } else {
+                        // Baseline records also bind their UUID, although they have no archive
+                        // event. A later AX callback must not import that old notification anew.
+                        try execute("INSERT OR IGNORE INTO notification_alias(uuid,event_id,source_id) VALUES(?,?,?)",
+                                    [.text(uuid), .text(eventID), .text(record.sourceID)])
+                    }
+                }
                 guard previous != record.fingerprint else { continue }
-                let eventID = try scalarText("SELECT event_id FROM source_seen WHERE source_id=?", [.text(record.sourceID)]) ?? record.event.id
-                if !baseline {
+                // A live banner already archived before the first DB snapshot is enriched even
+                // during baseline. Other pre-existing database records remain baseline-only.
+                if !baseline || claimsBanner {
                     var event = record.event
                     event.id = eventID
                     added.append(try archive(event, fingerprints: fingerprints))
@@ -96,6 +122,42 @@ final class NotificationHistoryStore {
             }
             if baseline { try execute("INSERT INTO metadata(key,value) VALUES('baseline','1')") }
             return added
+        }
+    }
+
+    /// AX supplies an exact system UUID but no delivery timestamp or authoritative bundle ID.
+    /// Keep it provisional until the database identifies one matching delivery occurrence.
+    func ingestBanner(_ observation: NotificationBannerObservation, fingerprints: [String]) throws -> MirroredNotification? {
+        try transaction {
+            let uuid = observation.sourceUUID
+            let alias = try notificationAlias(uuid: uuid)
+            if alias?.sourceID != nil { return nil } // Bound database metadata is authoritative.
+            let appName = observation.displayAppName.flatMap { $0.isEmpty ? nil : $0 } ?? "Mac"
+            let subtitle = observation.subtitle.isEmpty ? nil : observation.subtitle
+            if let alias {
+                guard var existing = try archivedEvent(id: alias.eventID) else { throw StoreError.invalidEvent }
+                guard existing.title != observation.title || existing.subtitle != subtitle ||
+                        existing.body != observation.body || existing.appName != appName else { return nil }
+                // AX may initially expose only part of a tree. Fill changed fields under the
+                // same ID; repeated callbacks with identical content consume no new sequence.
+                existing.title = observation.title
+                existing.subtitle = subtitle
+                existing.body = observation.body
+                existing.appName = appName
+                return try archive(existing, fingerprints: fingerprints)
+            }
+            // Older Sill databases predate aliases. Do not replay an old visible banner merely
+            // because its exact UUID has not yet been backfilled into the additive alias table.
+            if try scalarText("SELECT event_id FROM source_seen WHERE source_id GLOB ? LIMIT 1", [.text(uuid + ":*")]) != nil {
+                return nil
+            }
+            let event = MirroredNotification(id: "notification-ax:" + uuid, appBundleID: "", appName: appName,
+                                             title: observation.title, subtitle: subtitle, body: observation.body,
+                                             date: observation.observedAt)
+            let archived = try archive(event, fingerprints: fingerprints)
+            try execute("INSERT INTO notification_alias(uuid,event_id,source_id) VALUES(?,?,NULL)",
+                        [.text(uuid), .text(event.id)])
+            return archived
         }
     }
 
@@ -186,6 +248,32 @@ final class NotificationHistoryStore {
         let data = Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, column)))
         guard let event = try? JSONDecoder().decode(MirroredNotification.self, from: data) else { throw StoreError.invalidEvent }
         return event
+    }
+
+    private struct NotificationAlias {
+        let eventID: String
+        let sourceID: String?
+    }
+
+    private func notificationAlias(uuid: String) throws -> NotificationAlias? {
+        let statement = try prepare("SELECT event_id,source_id FROM notification_alias WHERE uuid=?", [.text(uuid)])
+        defer { sqlite3_finalize(statement) }
+        guard try step(statement) else { return nil }
+        return NotificationAlias(eventID: text(statement, 0),
+                                 sourceID: sqlite3_column_type(statement, 1) == SQLITE_NULL ? nil : text(statement, 1))
+    }
+
+    private func archivedEvent(id: String) throws -> MirroredNotification? {
+        let statement = try prepare("SELECT event FROM archive WHERE event_id=?", [.text(id)])
+        defer { sqlite3_finalize(statement) }
+        return try step(statement) ? event(at: statement, column: 0) : nil
+    }
+
+    private func sourceUUID(in sourceID: String) -> String? {
+        guard let separator = sourceID.firstIndex(of: ":") else { return nil }
+        let uuid = sourceID[..<separator]
+        guard uuid.utf8.count == 32, uuid.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return nil }
+        return String(uuid)
     }
 
     private enum Value { case text(String), integer(Int64), real(Double), blob(Data), null }

@@ -252,7 +252,10 @@ final class NotificationInbox: NSObject, ObservableObject, UNUserNotificationCen
                 let old = entries[i].event
                 let olderRevision = old.historyID == event.historyID &&
                     (old.sequence ?? 0) > (event.sequence ?? 0)
-                if !olderRevision, old != event { entries[i].event = event }
+                if !olderRevision, old != event {
+                    entries[i].event = event
+                    if old.appBundleID != event.appBundleID { syncSavedIcons() }
+                }
                 persist()
             }
             return true

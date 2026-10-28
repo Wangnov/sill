@@ -40,6 +40,8 @@ package final class NotificationMirror {
     @ObservationIgnored private var history: NotificationHistoryStore?
     @ObservationIgnored private var deliveryTask: Task<Void, Never>?
     @ObservationIgnored private var deliveryGeneration = 0
+    @ObservationIgnored private var pendingBanners: [String: NotificationBannerObservation] = [:]
+    @ObservationIgnored private var bannerRetry: Task<Void, Never>?
 
     private enum Key {
         static let enabled = "notificationMirror.enabled"
@@ -79,6 +81,7 @@ package final class NotificationMirror {
         self.isPaired = isPaired
         self.onHistoryAvailable = onHistoryAvailable
         collector.onSnapshot = { [weak self] in self?.receiveSnapshot($0) }
+        collector.onBanner = { [weak self] in self?.receiveBanner($0) }
         collector.onStatus = { [weak self] in self?.collectorStatus = $0 }
         pruneUnpairedRegistrations()
         apply()
@@ -86,6 +89,8 @@ package final class NotificationMirror {
 
     package func stop() {
         collector.stop()
+        bannerRetry?.cancel()
+        bannerRetry = nil
         deliveryGeneration += 1
         deliveryTask?.cancel()
         deliveryTask = nil
@@ -142,7 +147,8 @@ package final class NotificationMirror {
     }
 
     package func sendTestNotification() {
-        receive(MirroredNotification(appBundleID: Bundle.main.bundleIdentifier ?? "me.saffer.sill.mac",
+        receive(MirroredNotification(id: "sill-test:" + UUID().uuidString,
+                                     appBundleID: Bundle.main.bundleIdentifier ?? "me.saffer.sill.mac",
                                      appName: "Sill", title: String(localized: "Notification mirroring test"),
                                      body: String(localized: "This test came from your Mac. Live delivery updates Sill’s inbox; configured APNs can also show an iOS alert.")))
     }
@@ -163,6 +169,8 @@ package final class NotificationMirror {
         provider = nil
         guard enabled else {
             collector.stop()
+            bannerRetry?.cancel()
+            bannerRetry = nil
             collectorStatus = String(localized: "Notification mirroring is off.")
             deliveryStatus = String(localized: "Notification delivery is off.")
             return
@@ -173,6 +181,7 @@ package final class NotificationMirror {
             return
         }
         collector.start()
+        flushPendingBanners()
         onHistoryAvailable?()
         guard pushEnabled else {
             deliveryStatus = String(localized: "Live inbox only. APNs delivery is off.")
@@ -213,10 +222,55 @@ package final class NotificationMirror {
     private func receiveSnapshot(_ snapshot: NotificationStoreSnapshot) {
         guard enabled, !macID.isEmpty else { return }
         do {
-            let events = try historyStore().ingest(snapshot, fingerprints: pushRecipients())
+            let filtered = NotificationStoreSnapshot(records: snapshot.records.filter {
+                !isMirrorSource($0.event.appBundleID)
+            }, skippedRecordCount: snapshot.skippedRecordCount)
+            let events = try historyStore().ingest(filtered, fingerprints: pushRecipients())
             if !events.isEmpty { onHistoryAvailable?() }
             deliverPending()
         } catch { historyFailure(error) }
+    }
+
+    /// A banner can vanish before the system writes its notification store. Persist it immediately;
+    /// the later database observation enriches this same archived event instead of alerting twice.
+    private func receiveBanner(_ banner: NotificationBannerObservation) {
+        guard enabled, !macID.isEmpty else { return }
+        // The banner may disappear before another AX event or a database snapshot. Retain a
+        // failed write in memory and retry; the observer's duplicate cache is not a durable ACK.
+        pendingBanners[banner.sourceUUID] = banner
+        flushPendingBanners()
+    }
+
+    private func flushPendingBanners() {
+        guard enabled, !macID.isEmpty, !pendingBanners.isEmpty else { return }
+        var changed = false
+        do {
+            for banner in Array(pendingBanners.values) {
+                // AX does not identify the posting app. Keep it immediately in the TLS inbox,
+                // but wait for database source attribution before creating a background push:
+                // otherwise an iPhone-mirrored Sill alert could produce another Sill alert.
+                if try historyStore().ingestBanner(banner, fingerprints: []) != nil { changed = true }
+                pendingBanners.removeValue(forKey: banner.sourceUUID)
+            }
+        } catch {
+            historyFailure(error)
+            if bannerRetry == nil {
+                bannerRetry = Task { [weak self] in
+                    do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                    guard let self else { return }
+                    self.bannerRetry = nil
+                    self.flushPendingBanners()
+                }
+            }
+        }
+        if changed { onHistoryAvailable?() }
+    }
+
+    private func isMirrorSource(_ bundleID: String) -> Bool {
+        bundleID == Bundle.main.bundleIdentifier || bundleID == "me.saffer.sill"
+            || bundleID.hasPrefix("me.saffer.sill.")
+            || (!apns.topic.isEmpty && bundleID == apns.topic)
+            || registrations.values.contains { $0.topic == bundleID }
     }
 
     /// Per-connection replay calls this in bounded batches. Persistence failure throws instead of
@@ -252,6 +306,14 @@ package final class NotificationMirror {
                         let key = attempt.fingerprint
                         guard let sending = self.registrations[key], self.isPaired?(sending.fingerprint) == true,
                               sending.topic == self.apns.topic, sending.environment == self.apns.environment else { continue }
+                        let explicitTest = attempt.event.id.hasPrefix("sill-test:")
+                            && attempt.event.appBundleID == (Bundle.main.bundleIdentifier ?? "me.saffer.sill.mac")
+                        guard explicitTest || (!attempt.event.appBundleID.isEmpty && !self.isMirrorSource(attempt.event.appBundleID)) else {
+                            // Terminal suppression also handles older queued events without a busy
+                            // retry loop. Provider reconfiguration must not revive a mirror loop.
+                            try self.historyStore().finish(attempt, state: "suppressed", problem: "Unconfirmed or mirrored notification source")
+                            continue
+                        }
                         let result = await provider.send(attempt.event, macID: self.macID, token: sending.token)
                         guard !Task.isCancelled, self.deliveryGeneration == generation else { break }
                         // A newer registration owns pending delivery now; an old request's result

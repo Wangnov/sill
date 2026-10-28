@@ -20,6 +20,11 @@ struct NotificationMirroringSection: View {
                             NSWorkspace.shared.open(url)
                         }
                     }
+                    Button("Notification Settings…") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
                     Button("Send Test Notification") { mirror.sendTestNotification() }
                 }
             }
@@ -50,7 +55,7 @@ struct NotificationMirroringSection: View {
         } header: {
             Text("Notification mirroring (experimental)")
         } footer: {
-            Text("Sill reads macOS’s retained notification database without modifying it. This requires Full Disk Access, and the system’s database format may change with macOS updates. Notifications that disappear before they are saved may be missed. Sill stores its own notification history locally and can sync it when a paired device reconnects. The test button checks delivery without requiring a Mac notification. Background iOS alerts require a signed iOS fork with Push Notifications, notification permission, and matching APNs topic and environment. APNs sends the mirrored title and body through Apple. Keep the .p8 file outside the app and repository; Sill stores only its path.")
+            Text("Sill can mirror visible banners promptly with Accessibility access and use stored notifications to fill gaps with Full Disk Access. To receive banners while sharing or mirroring your screen, allow notifications during screen sharing in System Settings. Hidden previews or content macOS does not expose may still be missing. Sill keeps a local history and syncs it when a paired device reconnects. The test button checks delivery without a Mac notification. Background iOS alerts require a signed iOS build with Push Notifications, notification permission, and matching APNs topic and environment. Apple receives the mirrored title and body through APNs. Keep the .p8 key outside the app and repository; Sill stores only its path.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

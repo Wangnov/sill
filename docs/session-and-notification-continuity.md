@@ -32,25 +32,34 @@ Both the Mac and iOS switches are off by default. On Mac, General contains **Not
 mirroring (experimental)**. On iOS, **Notifications** opens a shared inbox from the connect
 screen or streaming settings. Enable both and establish a paired TLS connection once.
 
-The collector reads macOS's retained Notification Center SQLite store every two seconds, using
-read-only access and the live database's normal WAL handling. It does not open or scrape the
-Notification Center interface. Sill needs its own **Full Disk Access** authorization; the button
-in General opens that System Settings pane. Allow the actual Sill build and restart it. The
-Accessibility permission used for remote input does not authorize this database read.
+The collector combines two complementary sources. An Accessibility (AX) observer listens for
+changes in the Notification Center interface and reads text from identifiable, visible notification
+groups. Separately, it reads macOS's retained Notification Center SQLite store every two seconds,
+using read-only access and the live database's normal WAL handling. The observer does not dismiss
+notifications or change the interface; it uses bounded work on the callback's element or subtree,
+not an idle full-tree poll. AX needs Sill's **Accessibility** authorization. The database needs
+Sill's own **Full Disk Access** authorization; the button in General opens that System Settings
+pane. Allow the actual Sill build and restart it. Accessibility does not authorize the database read.
 
 The current adapter targets the private store schema verified on macOS 27, at
 `~/Library/Group Containers/group.com.apple.usernoted/db2/db`. It reads stored delivery records
 and supported plain-text title, subtitle and body fields, with the source application's bundle
 identifier. It does not filter to the visible banner, an opened notification group or selected
-source apps; Sill's own notifications are excluded to avoid a loop. Missing app names fall back
-to their bundle IDs. Unsupported content is reported as skipped, without putting system blobs
+source apps; the database reader excludes Sill's own notifications to avoid a loop. An AX-only
+observation has no authoritative bundle ID, so that database exclusion cannot be applied to it.
+Missing database app names fall back to their bundle IDs. Unsupported content is reported as
+skipped, without putting system blobs
 or notification text in diagnostic logs. Read/access/schema failures remain failures and do not
 advance the durable source observations. macOS updates may change this private format and
 require an adapter update.
 
-This can recover notifications retained by macOS while Sill was stopped, after the initial
-baseline below. It cannot recover notifications macOS never stored, records already deleted
-before Sill captured them, or records created and removed entirely between polls. It is not an
+AX can observe a visible banner before a retained record becomes readable, but only when the
+system exposes a suitable group and content to the observer. Hidden previews, notifications that
+never appear as observable banners, unsupported AX events or tree shapes, and short-lived or
+overloaded observations may be missed or incomplete. The database can recover notifications
+retained while Sill was stopped after the initial baseline below, including some without a visible
+banner. It cannot recover notifications macOS never stored, records deleted before capture, or
+records created and removed entirely between polls. Neither source nor their combination is an
 OS-supported guarantee of every notification ever delivered.
 
 Apple's documented [`UNUserNotificationCenter.current()`](https://developer.apple.com/documentation/usernotifications/unusernotificationcenter/current%28%29)
@@ -65,19 +74,46 @@ every alternative approach is impossible.
 
 ## Durable history and ordered synchronization
 
-The first **successful** source snapshot establishes a persistent baseline. Existing records
+The first **successful database** snapshot establishes a persistent baseline. Existing records
 are marked as seen without importing them into Sill's archive or sending historical alerts.
 An empty successful snapshot also establishes that baseline. Failed reads or failed local
 transactions do not establish or advance it. Normal restarts and settings changes preserve it.
+An AX banner observed before that snapshot may already be archived; a uniquely matching record in
+the first snapshot can enrich that event, while unrelated existing records remain baseline-only.
 
 After the baseline, a new retained delivery is saved to Sill's archive before it is eligible for
-TLS synchronization or APNs. Source observations, the archived event and its registered-device
-outbox entries commit in one SQLite transaction. If it fails, the source can be retried without
-silently marking the event as synchronized. Delivery identity uses the system UUID plus its
+TLS synchronization or APNs. A visible AX observation can also create an event immediately,
+including before the database baseline. Source observations, the archived event and its
+registered-device outbox entries commit in one SQLite transaction. A failed transaction does not
+advance the durable source observation. Retained delivery identity uses the system UUID plus its
 delivery occurrence, rather than a maximum integer row ID or matching text. Separate deliveries
-with identical text remain separate events. A body revision updates the same event ID and gets
-a higher sequence; the archive keeps that event's latest revision. Source delivery time is
-preserved in `date`; explicit test events use their creation time.
+with identical text remain separate events. A revision updates the same event ID and gets a higher
+sequence; the archive keeps that event's latest revision. Database delivery time is preserved in
+`date`; an AX-only event initially uses observation time, and explicit test events use creation time.
+
+An AX group is eligible only when its entire identifier is a UUID in canonical or 32-hex form;
+the normalized exact UUID is the alias, never text similarity or timing. AX alone supplies no
+authoritative posting bundle ID or delivery timestamp. The initial event therefore has an empty
+bundle ID and the neutral app name `Mac`; it may contain only the text visible in the AX tree.
+When one matching database occurrence is identifiable, it keeps the AX event ID and supplies its
+stored app identity, content and delivery time. Once bound, later AX callbacks cannot overwrite the
+database event. If the database arrives first, its bound alias suppresses later AX observations.
+Identical AX callbacks do not consume a new sequence; changed unbound content revises the same
+event. A UUID reused at a different database delivery time remains a separate database occurrence.
+If multiple occurrences with the same UUID are candidates in one snapshot, the collector does not
+guess which one matches: their database IDs and the unbound AX event remain separate. Thus UUID
+reuse, ambiguous matches and source visibility limits can still produce duplicates or missed events;
+the alias is a conservative correlation, not a universal exactly-once guarantee. An accepted APNs
+request for an event is not rearmed when the database enriches that same event.
+
+AX-only events are archived and synchronized over paired TLS immediately, but do not create
+APNs outbox work until the database identifies their posting app. Otherwise a Sill alert mirrored
+back from an iPhone could trigger another Sill alert. Own Sill bundle IDs and configured/registered
+push topics are excluded from background delivery; explicit test-button events are an exception.
+An AX-only occurrence that never reaches the database therefore remains recoverable in the inbox,
+without a guaranteed background system alert or source icon. Failed AX archive writes retain the
+observation in memory and retry every two seconds; a process exit during persistent disk failure
+can still lose that unwritten observation.
 
 The Mac stores this decoded history in its own
 `~/Library/Application Support/<current-bundle-id>/NotificationMirror/history.sqlite`.
@@ -183,10 +219,10 @@ current build for the required permissions, including Full Disk Access for notif
 and keep that binary during the test; see [fork development](fork-development.md). Sill opens
 the system permission pane but does not grant itself access or change the system database.
 
-## Current native macOS acceptance
+## Earlier native macOS database-path checks
 
-The current native macOS 27 run used the normal Sill app with Full Disk Access authorized for
-Sill itself and an independent, real paired TLS fixture. The initial baseline had already been
+The following native macOS 27 run preceded the AX integration. It used the normal Sill app with
+Full Disk Access authorized for Sill itself and an independent, real paired TLS fixture. The initial baseline had already been
 established: Sill's archive contained **0** events and `source_seen` contained **26** observations.
 This exercised the database capture and TLS path; reading text from an Accessibility window
 alone was not treated as successful notification capture.
@@ -242,6 +278,16 @@ disabled pause and ordered backlog drain without claiming complete or immediate 
 The actual iPhone fork and visible APNs delivery have not yet completed acceptance. This TLS
 fixture does not establish foreground/background/locked behavior on a provisioned iPhone.
 
+### Independent AX and database probe
+
+In a separate local probe of eight controlled deliveries, the AX observations covered **7**,
+including the original version of the repeated notification; the retained database observations
+covered **7**, including the other simultaneously delivered twin. Correlating their exact UUIDs
+gave a combined set of **8/8** for that fixture. This is a comparison of observations from two
+independent probes, not an integrated Sill capture-to-iPhone or APNs test. It does not establish
+complete capture for other notification layouts or operating conditions, exactly-once delivery,
+or visible push presentation on a real device.
+
 ## Validation boundaries
 
 The repository includes separate checks for the distinct parts of this feature:
@@ -251,9 +297,12 @@ The repository includes separate checks for the distinct parts of this feature:
 - `Tests/checks/notification-store/run.sh`: the actual reader against synthetic private-schema
   fixtures, including live WAL records, delivered filtering, distinct delivery identities,
   revisions and store resets. This does not open the person's notification database.
+- `Tests/checks/notification-banner/run.sh`: offline parsing of AX UUID and text fixtures; it
+  does not observe a live Accessibility tree or establish live capture coverage.
 - `Tests/checks/notification-history/run.sh`: atomic baseline/archive writes and rollback, restart
-  idempotence, equal-text deliveries, body revisions, ordered replay, durable retry state,
-  disabled/resume behavior, legacy JSON and offline APNs response classification.
+  idempotence, exact UUID alias binding and ambiguity, equal-text deliveries, body revisions,
+  ordered replay, durable retry state, disabled/resume behavior, legacy JSON and offline APNs
+  response classification. Synthetic alias checks do not establish live integrated capture.
 
 Synthetic socket checks can verify per-viewer pause, all-viewer idle, media resume, bounded socket
 retention and reconnect without a device. Successful builds, fixture checks and a read-only

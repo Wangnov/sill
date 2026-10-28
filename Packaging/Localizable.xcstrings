@@ -928,6 +928,28 @@
         }
       }
     },
+    "Allow Sill in Accessibility to mirror visible banners.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow Sill in Accessibility to mirror visible banners."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请在“辅助功能”中允许 Sill，以镜像可见横幅。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請在「輔助使用」中允許 Sill，以鏡像可見橫幅。"
+          }
+        }
+      }
+    },
     "Allow connections from the internet": {},
     "Allowed": {
       "localizations": {
@@ -2186,6 +2208,28 @@
         }
       }
     },
+    "Live notification banners are connected.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live notification banners are connected."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实时通知横幅已连接。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "即時通知橫幅已連線。"
+          }
+        }
+      }
+    },
     "Local Network": {
       "localizations": {
         "en": {
@@ -2492,6 +2536,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "通知中心未提供可讀取的通知視窗。仍可傳送測試通知。"
+          }
+        }
+      }
+    },
+    "Notification Settings…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification Settings…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知设置…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知設定…"
           }
         }
       }
@@ -4117,6 +4183,28 @@
         }
       }
     },
+    "Sill can mirror visible banners promptly with Accessibility access and use stored notifications to fill gaps with Full Disk Access. To receive banners while sharing or mirroring your screen, allow notifications during screen sharing in System Settings. Hidden previews or content macOS does not expose may still be missing. Sill keeps a local history and syncs it when a paired device reconnects. The test button checks delivery without a Mac notification. Background iOS alerts require a signed iOS build with Push Notifications, notification permission, and matching APNs topic and environment. Apple receives the mirrored title and body through APNs. Keep the .p8 key outside the app and repository; Sill stores only its path.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sill can mirror visible banners promptly with Accessibility access and use stored notifications to fill gaps with Full Disk Access. To receive banners while sharing or mirroring your screen, allow notifications during screen sharing in System Settings. Hidden previews or content macOS does not expose may still be missing. Sill keeps a local history and syncs it when a paired device reconnects. The test button checks delivery without a Mac notification. Background iOS alerts require a signed iOS build with Push Notifications, notification permission, and matching APNs topic and environment. Apple receives the mirrored title and body through APNs. Keep the .p8 key outside the app and repository; Sill stores only its path."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "获得辅助功能权限后，Sill 可以及时镜像可见横幅；获得完全磁盘访问权限后，可用已存储的通知补充遗漏。要在共享或镜像屏幕时接收横幅，请在系统设置中允许屏幕共享时显示通知。隐藏的预览或 macOS 未提供的内容仍可能缺失。Sill 在本地保存历史记录，并在已配对设备重新连接时同步。测试按钮无需 Mac 通知即可检查投递。iOS 后台提醒需要签名的 iOS 版本启用推送通知、获得通知权限，并使用匹配的 APNs 主题和环境。Apple 通过 APNs 接收镜像的标题和正文。请将 .p8 密钥保存在 App 和代码仓库之外；Sill 只保存其路径。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取得輔助使用權限後，Sill 可以即時鏡像可見橫幅；取得完整磁碟存取權限後，可用已儲存的通知補足遺漏。若要在共享或鏡像螢幕時接收橫幅，請在系統設定中允許螢幕共享時顯示通知。隱藏的預覽或 macOS 未提供的內容仍可能缺失。Sill 在本機保留歷史記錄，並在已配對裝置重新連線時同步。測試按鈕無須 Mac 通知即可檢查傳送。iOS 背景提示需要已簽署的 iOS 版本啟用推播通知、取得通知權限，並使用相符的 APNs 主題和環境。Apple 透過 APNs 接收鏡像的標題和內文。請將 .p8 金鑰保存在 App 和程式碼儲存庫之外；Sill 只儲存其路徑。"
+          }
+        }
+      }
+    },
     "Sill cannot read the notification store. Allow Sill in Full Disk Access, then restart Sill.": {
       "localizations": {
         "en": {
@@ -4250,6 +4338,28 @@
       }
     },
     "Sleep": {},
+    "Some live notification events are unavailable. Stored notifications still fill gaps.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some live notification events are unavailable. Stored notifications still fill gaps."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分实时通知事件不可用，已存储的通知仍可补充遗漏。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分即時通知事件無法使用，已儲存的通知仍可補足遺漏。"
+          }
+        }
+      }
+    },
     "Standard": {
       "localizations": {
         "en": {
@@ -4525,6 +4635,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Mac 也會繼續播放聲音"
+          }
+        }
+      }
+    },
+    "The Mac notification interface could not be observed.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The Mac notification interface could not be observed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法观察 Mac 通知界面。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法觀察 Mac 通知介面。"
           }
         }
       }
@@ -4907,6 +5039,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在等候裝置"
+          }
+        }
+      }
+    },
+    "Waiting for the Mac notification interface.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for the Mac notification interface."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待 Mac 通知界面。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待 Mac 通知介面。"
           }
         }
       }
