@@ -11,6 +11,11 @@ case "$mode" in
 esac
 
 derived="$root/.build/DerivedData"
+signing_config="$root/Signing.local.xcconfig"
+signing_args=()
+if [ -e "$signing_config" ] || [ -L "$signing_config" ]; then
+    signing_args=(-xcconfig "$signing_config")
+fi
 app="$derived/Build/Products/Debug/Sill Development.app"
 binary="$app/Contents/MacOS/Sill"
 # A checkout may live on a volume the GUI app cannot write yet. Use the app's normal log
@@ -38,7 +43,7 @@ while read -r pid; do
 done < <(development_pids)
 
 xcodebuild -workspace "$root/Sill.xcworkspace" -scheme SillMacApp \
-    -configuration Debug -destination 'platform=macOS' -derivedDataPath "$derived" build
+    -configuration Debug -destination 'platform=macOS' -derivedDataPath "$derived" ${signing_args[@]+"${signing_args[@]}"} build
 
 # The upstream log path is shared independently of bundle ID. Keep development logs here too.
 if [ "$mode" = --debug ]; then

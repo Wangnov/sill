@@ -32,6 +32,13 @@ reset only the development app's Accessibility authorization with
 Apple Development signing identity can reduce authorization loss across rebuilds; without a
 certificate, keep the same binary throughout device testing.
 
+To use Apple Development signing with the daily build script, first add your Apple account in
+Xcode Settings → Accounts and prepare an Apple Development certificate for your team. Copy
+`Signing.example.xcconfig` to `Signing.local.xcconfig` at the repository root and replace
+`YOUR_TEAM_ID` with your Team ID. The script passes this local file to Xcode when present; signing
+errors stop the build. The local configuration is ignored by Git. It does not change the Mac bundle
+ID or its pairing namespace. Without the file, the script keeps the default ad hoc signing.
+
 Release builds `Sill.app` with bundle ID `local.sill.fork.mac`. Override
 `PRODUCT_BUNDLE_IDENTIFIER`, `DEVELOPMENT_TEAM` and `CODE_SIGN_IDENTITY` for your own release
 identity. The project has no upstream team ID or restricted keychain entitlement. A local
