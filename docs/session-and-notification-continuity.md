@@ -288,6 +288,36 @@ independent probes, not an integrated Sill capture-to-iPhone or APNs test. It do
 complete capture for other notification layouts or operating conditions, exactly-once delivery,
 or visible push presentation on a real device.
 
+### Integrated native AX + database acceptance
+
+The native Mac build from commit `66dcc31` was exercised on macOS 27 with its own Accessibility,
+Full Disk Access and screen-capture permissions. The independent AX probe was stopped and its
+permission removed. Both collector sources reported connected, and a disposable, genuinely paired
+TLS client observed the production server. Notifications came from a separate app using public
+UserNotifications APIs; Sill's test button was not used.
+
+- Lifecycle run `9E9ADD71-08B8-45D9-8406-47935DC10EB2` preserved **8/8 delivery occurrences**,
+  including the previously missed original of the replaced request. Seven arrived through AX;
+  the database supplied the other simultaneous twin and enriched six existing AX IDs. Final TLS
+  replay contained eight IDs. The original remained AX-only with unknown source and no APNs work.
+- A 0.2-second observer of Sill's own archive first saw the seven AX events **0.258–1.119 seconds**
+  after their public delivery timestamps. The DB-only twin took **20.606 seconds**. These are
+  sampled observation delays, not exact SQLite commit times, and not all eight arrived instantly.
+- Burst run `E15F76CB-8ADA-4D9A-9D3A-693A5CF4D1BB` delivered **40/40** through paired TLS.
+  Its 80 frames comprised 40 initial AX events and 40 same-ID enrichments. Final text, sources and
+  delivery dates matched the public sender snapshots. First TLS arrivals had a median delay of
+  **136 milliseconds** on this local connection; source enrichment took **6.305–47.281 seconds**.
+- After a normal restart of the same binary, resuming after sequence 85 returned **40/40** final
+  burst events with every event field unchanged. Sequences 126–165 replaced the earlier versions
+  86–125; this proves final-state recovery, not replay of every intermediate revision.
+
+The temporary pairing, credentials and synthetic archive entries were removed afterward. Other
+archive entries were verified unchanged. The sender's notification permission was restored off;
+Sill's permissions and notification collection remained enabled. Notification display while
+screen sharing remained allowed, because hidden banners cannot supply AX content. Both builds,
+all 60 local check suites and the commit's CI passed. This run did not establish source-icon
+delivery, an actual iPhone fork inbox, or visible background/locked APNs presentation.
+
 ## Validation boundaries
 
 The repository includes separate checks for the distinct parts of this feature:
