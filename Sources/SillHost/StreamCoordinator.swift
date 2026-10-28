@@ -268,6 +268,10 @@ package final class StreamCoordinator {
         var connection: NWConnection?
         // Separate from media: a suspended viewer can still be registered for APNs delivery.
         var notificationsSubscribed = false
+        // All replay and new events share one ordered archive drain for this connection.
+        var notificationReplayID: UUID?
+        var notificationSubscription: NotificationSubscription?
+        var notificationSequence: Int64?
         // Answers do not change the last published state.
         var lastPublished: HostSettingsState?
         // A report carries the bitrate at judgment; settings omit it when the target has changed.
@@ -411,7 +415,7 @@ package final class StreamCoordinator {
         if let remote, let identity = remote.identity {
             notificationMirror.start(macID: identity.macID,
                                      isPaired: { [weak remote] in remote?.isPaired($0) == true },
-                                     onNotification: { [weak self] in self?.sendNotification($0) })
+                                     onHistoryAvailable: { [weak self] in self?.wakeNotificationSubscribers() })
         }
         server.onMediaResumed = { [weak self] connection in
             // A foreground return is activity like a new connection: wake a sleeping display.
@@ -1028,6 +1032,11 @@ package final class StreamCoordinator {
                   let subscription = Wire.decode(NotificationSubscription.self, from: message.payload),
                   notificationMirror.subscribe(subscription, fingerprint: route.fingerprint) else { return }
             clients[id]?.notificationsSubscribed = subscription.enabled
+            clients[id]?.notificationSubscription = subscription.enabled ? subscription : nil
+            clients[id]?.notificationSequence = nil
+            let replayID = UUID()
+            clients[id]?.notificationReplayID = subscription.enabled ? replayID : nil
+            if subscription.enabled { await drainNotifications(to: connection, replayID: replayID) }
         case .selectSource:
             guard let source = Wire.decode(StreamSource.self, from: message.payload) else { return }
             // A window picked comes forward on the Mac, which closes a view a gesture opened; the
@@ -2731,22 +2740,59 @@ package final class StreamCoordinator {
                                                       mediaSubscription: 1, notificationMirroring: remote?.identity == nil ? nil : 1)))
     }
 
-    /// Never broadcast notification contents to the ordinary catalog audience. Pairing and the
-    /// per-device opt-in are checked again for each event, even if a connection is still open
-    /// while removal of its pairing is draining a goodbye.
-    private func sendNotification(_ event: MirroredNotification) {
-        let now = Date().timeIntervalSince1970
-        let message = StreamMessage(kind: .mirroredNotification, timestamp: now, isKeyframe: false,
-                                    payload: Wire.encode(event))
-        for state in clients.values {
-            guard state.notificationsSubscribed, let route = state.route, route.encrypted,
-                  let fingerprint = route.fingerprint, remote?.isPaired(fingerprint) == true,
+    /// A commit or an off→on transition wakes subscribed connections. New notifications never
+    /// bypass this drain: sequence ordering remains intact while collection is paused/resumed.
+    private func wakeNotificationSubscribers() {
+        guard notificationMirror.enabled else { return }
+        for (id, state) in clients {
+            guard state.notificationsSubscribed, state.notificationReplayID == nil,
                   let connection = state.connection else { continue }
-            if let (_, png) = catalog.allIcons.first(where: { $0.0 == event.appBundleID }) {
-                server.send(StreamMessage(kind: .appIcon, timestamp: now, isKeyframe: false,
-                                          payload: ImageBlob.encodeIcon(bundleID: event.appBundleID, png: png)), to: connection)
+            let replayID = UUID()
+            clients[id]?.notificationReplayID = replayID
+            Task { [weak self] in await self?.drainNotifications(to: connection, replayID: replayID) }
+        }
+    }
+
+    private func sendNotification(_ event: MirroredNotification, to connection: NWConnection) {
+        let now = Date().timeIntervalSince1970
+        if let (_, png) = catalog.allIcons.first(where: { $0.0 == event.appBundleID }) {
+            server.send(StreamMessage(kind: .appIcon, timestamp: now, isKeyframe: false,
+                                      payload: ImageBlob.encodeIcon(bundleID: event.appBundleID, png: png)), to: connection)
+        }
+        server.send(StreamMessage(kind: .mirroredNotification, timestamp: now, isKeyframe: false,
+                                  payload: Wire.encode(event)), to: connection)
+    }
+
+    /// Only this authenticated subscriber receives its events. Its last enqueued sequence is
+    /// retained while disabled, and every resume starts at that cursor. Each batch is synchronous;
+    /// a final empty read and removing its task token have no intervening await, so no wake is lost.
+    private func drainNotifications(to connection: NWConnection, replayID: UUID) async {
+        let id = ObjectIdentifier(connection)
+        defer {
+            if clients[id]?.notificationReplayID == replayID { clients[id]?.notificationReplayID = nil }
+        }
+        while !Task.isCancelled, clients[id]?.notificationReplayID == replayID {
+            guard notificationMirror.enabled, clients[id]?.notificationsSubscribed == true,
+                  let subscription = clients[id]?.notificationSubscription,
+                  let route = clients[id]?.route, route.encrypted,
+                  let fingerprint = route.fingerprint, remote?.isPaired(fingerprint) == true else { return }
+            do {
+                if clients[id]?.notificationSequence == nil {
+                    clients[id]?.notificationSequence = try notificationMirror.replayStart(for: subscription)
+                }
+                let batch = try notificationMirror.replay(after: clients[id]?.notificationSequence ?? 0)
+                if batch.isEmpty { return }
+                for event in batch {
+                    sendNotification(event, to: connection)
+                    clients[id]?.notificationSequence = event.sequence ?? clients[id]?.notificationSequence
+                }
+                await Task.yield()
+            } catch {
+                notificationMirror.replayFailed(error)
+                // Keep the cursor and retry quietly. A failed local read cannot count as an empty
+                // history or strand this connected subscriber until an unrelated reconnect.
+                do { try await Task.sleep(for: .seconds(5)) } catch { return }
             }
-            server.send(message, to: connection)
         }
     }
 

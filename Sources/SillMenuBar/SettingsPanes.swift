@@ -148,8 +148,7 @@ private struct GeneralPane: View {
                              access: previewClipboardAccess ?? model.permissions.clipboardAccess,
                              allow: { model.permissions.allowClipboard() })
             if let coordinator = model.coordinator {
-                NotificationMirroringSection(mirror: coordinator.notificationMirror,
-                                             allowAccessibility: { model.permissions.requestAccessibility() })
+                NotificationMirroringSection(mirror: coordinator.notificationMirror)
             }
             if let preview = previewUpdates {
                 UpdatesSection(pane: preview, automatic: .constant(true))

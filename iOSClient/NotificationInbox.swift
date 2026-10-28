@@ -23,19 +23,45 @@ final class NotificationInbox: NSObject, ObservableObject, UNUserNotificationCen
         var environment: String
     }
 
+    struct HistoryCursor: Codable, Equatable {
+        var historyID: String
+        var lastSequence: Int64
+    }
+
+    /// A cleared APNs summary can be ahead of TLS. Hide only that revision while replay fills
+    /// the gap; once TLS reaches it, the normal cursor makes this temporary tombstone redundant.
+    private struct ClearedRevision: Codable {
+        var macID: String
+        var historyID: String
+        var sequence: Int64
+    }
+
+    private struct History: Codable {
+        var entries: [Entry]
+        var cursors: [String: HistoryCursor]
+        var clearedRevisions: [String: ClearedRevision]?
+    }
+
     @Published private(set) var entries: [Entry] = []
     @Published private(set) var enabled: Bool
     @Published private(set) var authorization: UNAuthorizationStatus = .notDetermined
     @Published private(set) var pushRegistration: PushRegistration?
     @Published private(set) var registrationProblem: String?
+    @Published private(set) var persistenceProblem: String?
     @Published private(set) var icons: [String: UIImage] = [:]
     /// Consumed by one foreground window's inbox button after a system notification was tapped.
     @Published private(set) var presentationRequest: UUID?
 
     private static let enabledKey = "Sill.mirrorNotifications"
-    private static let limit = 100
     private let defaults: UserDefaults
     private let center: UNUserNotificationCenter
+    private let historyURL: URL?
+    /// The pending cursor belongs to the in-memory entries. Only the cursor from a successful
+    /// atomic save may be sent on reconnect; an interrupted/failed save must replay that batch.
+    private var cursors: [String: HistoryCursor] = [:]
+    private var savedCursors: [String: HistoryCursor] = [:]
+    private var clearedRevisions: [String: ClearedRevision] = [:]
+    private var persistenceScheduled = false
     private var savedMacStore: SavedMacStore?
     private var savedMacChanges: AnyCancellable?
     private var activation: NSObjectProtocol?
@@ -43,18 +69,29 @@ final class NotificationInbox: NSObject, ObservableObject, UNUserNotificationCen
     private var token: String?
     private var pendingPushes: [(event: MirroredNotification, macID: String, tapped: Bool)] = []
 
-    init(defaults: UserDefaults = .standard, center: UNUserNotificationCenter = .current()) {
+    init(defaults: UserDefaults = .standard, center: UNUserNotificationCenter = .current(),
+         historyURL: URL? = NotificationInbox.defaultHistoryURL) {
         self.defaults = defaults
         self.center = center
+        self.historyURL = historyURL
         enabled = defaults.bool(forKey: Self.enabledKey)
         super.init()
-        if let url = Self.historyURL, let data = try? Data(contentsOf: url),
-           let history = try? JSONDecoder().decode([Entry].self, from: data) {
-            entries = Array(history.prefix(Self.limit))
+        if let url = historyURL, let data = try? Data(contentsOf: url) {
+            if let history = try? JSONDecoder().decode(History.self, from: data) {
+                entries = history.entries
+                cursors = history.cursors
+                savedCursors = history.cursors
+                clearedRevisions = history.clearedRevisions ?? [:]
+            } else if let legacy = try? JSONDecoder().decode([Entry].self, from: data) {
+                // Upgrade the original inbox without discarding any of its surviving entries.
+                entries = legacy
+            }
         }
     }
 
     var unreadCount: Int { entries.filter { !$0.read }.count }
+
+    func historyCursor(for macID: String) -> HistoryCursor? { savedCursors[macID] }
 
     /// Called during didFinishLaunching, before iOS can deliver a cold-start notification action.
     /// Permission is requested only by setEnabled(true), after the person's explicit choice.
@@ -173,14 +210,54 @@ final class NotificationInbox: NSObject, ObservableObject, UNUserNotificationCen
         guard enabled, let store = savedMacStore, let mac = store.snapshot.macs.first(where: { $0.macID == macID }),
               !event.id.isEmpty else { return false }
         let id = macID + ":" + event.id
-        if let i = entries.firstIndex(where: { $0.id == id }) {
+        let index = entries.firstIndex(where: { $0.id == id })
+        let incomingCursor: HistoryCursor?
+        if let historyID = event.historyID, !historyID.isEmpty,
+           let sequence = event.sequence, sequence > 0 {
+            incomingCursor = HistoryCursor(historyID: historyID, lastSequence: sequence)
+        } else {
+            incomingCursor = nil
+        }
+        let cleared = clearedRevisions[id]
+        let wasCleared = incomingCursor.map {
+            cleared?.historyID == $0.historyID && $0.lastSequence <= (cleared?.sequence ?? 0)
+        } ?? false
+        if let incomingCursor, let cursor = cursors[macID],
+           cursor.historyID == incomingCursor.historyID,
+           incomingCursor.lastSequence <= cursor.lastSequence, index == nil {
+            // A reconnect (or Notification Center import) cannot resurrect a cleared entry.
+            if direct, persistenceProblem != nil { persist() }
+            return true
+        }
+        if direct, let incomingCursor {
+            let old = cursors[macID]
+            if old?.historyID != incomingCursor.historyID || incomingCursor.lastSequence > (old?.lastSequence ?? 0) {
+                // Host replay/live delivery is ordered. APNs summaries never enter this path:
+                // receiving push #20 says nothing about whether TLS #1...19 were saved.
+                cursors[macID] = incomingCursor
+                clearedRevisions = clearedRevisions.filter {
+                    $0.value.macID != macID || ($0.value.historyID == incomingCursor.historyID &&
+                                               $0.value.sequence > incomingCursor.lastSequence)
+                }
+            }
+        }
+        if wasCleared {
+            if direct { persist() }
+            return true
+        }
+        if let i = index {
             // APNs may carry a size-limited summary. A later direct event supplies its full text,
             // preserving read state and position; a later push never downgrades the direct text.
-            if direct, entries[i].event != event { entries[i].event = event; persist() }
+            if direct {
+                let old = entries[i].event
+                let olderRevision = old.historyID == event.historyID &&
+                    (old.sequence ?? 0) > (event.sequence ?? 0)
+                if !olderRevision, old != event { entries[i].event = event }
+                persist()
+            }
             return true
         }
         entries.insert(Entry(macID: macID, macName: mac.name, event: event, read: false), at: 0)
-        if entries.count > Self.limit { entries.removeLast(entries.count - Self.limit) }
         persist()
         syncSavedIcons()
         return true
@@ -202,8 +279,18 @@ final class NotificationInbox: NSObject, ObservableObject, UNUserNotificationCen
     }
 
     func clearHistory() {
+        for entry in entries {
+            guard let historyID = entry.event.historyID, !historyID.isEmpty,
+                  let sequence = entry.event.sequence, sequence > 0 else { continue }
+            let cursor = cursors[entry.macID]
+            if cursor?.historyID != historyID || sequence > (cursor?.lastSequence ?? 0) {
+                clearedRevisions[entry.id] = ClearedRevision(macID: entry.macID, historyID: historyID,
+                                                            sequence: sequence)
+            }
+        }
         entries = []
-        persist()
+        // Keep the checkpoint even though its visible events were deliberately removed.
+        persistNow()
         syncSavedIcons()
         // Otherwise the next foreground import would restore the alerts the person just cleared.
         center.removeAllDeliveredNotifications()
@@ -219,31 +306,59 @@ final class NotificationInbox: NSObject, ObservableObject, UNUserNotificationCen
         guard let store = savedMacStore else { return }
         let kept = Set(store.snapshot.macs.map(\.macID))
         let next = entries.filter { kept.contains($0.macID) }
-        if next != entries { entries = next; persist() }
+        let nextCursors = cursors.filter { kept.contains($0.key) }
+        let nextCleared = clearedRevisions.filter { kept.contains($0.value.macID) }
+        if next != entries || nextCursors != cursors || nextCleared.count != clearedRevisions.count {
+            entries = next
+            cursors = nextCursors
+            clearedRevisions = nextCleared
+            savedCursors = savedCursors.filter { kept.contains($0.key) }
+            persistNow()
+        }
         syncSavedIcons()
     }
 
-    private static var historyURL: URL? {
+    private static var defaultHistoryURL: URL? {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("SillNotifications", isDirectory: true).appendingPathComponent("inbox.json")
     }
 
     private func persist() {
-        guard savedMacStore?.savedMacsSeeded != true, let url = Self.historyURL,
-              let data = try? JSONEncoder().encode(entries) else { return }
-        var directory = url.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        var values = URLResourceValues()
-        values.isExcludedFromBackup = true
-        try? directory.setResourceValues(values)
-        // Background APNs may arrive while locked, after the first unlock. This small bounded
-        // history stays on this device; it does not belong in an iCloud/device backup.
-        try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        guard !persistenceScheduled else { return }
+        persistenceScheduled = true
+        // Replay can contain many events. Save each short batch once, with its checkpoint in
+        // the same JSON transaction, instead of rewriting an ever-growing inbox for every row.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self else { return }
+            self.persistenceScheduled = false
+            self.persistNow()
+        }
+    }
+
+    private func persistNow() {
+        guard savedMacStore?.savedMacsSeeded != true else { return }
+        do {
+            guard let url = historyURL else { throw CocoaError(.fileNoSuchFile) }
+            let data = try JSONEncoder().encode(History(entries: entries, cursors: cursors,
+                                                       clearedRevisions: clearedRevisions))
+            var directory = url.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try directory.setResourceValues(values)
+            // After first unlock, background delivery may save while the device is locked.
+            try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            savedCursors = cursors
+            persistenceProblem = nil
+        } catch {
+            // Retain the batch in memory, but reconnect from the last successful checkpoint.
+            persistenceProblem = String(localized: "Notification history could not be saved. Reconnect to recover it from your Mac.")
+        }
     }
 
     private func iconKey(for entry: Entry) -> String { entry.macID + ":" + entry.event.appBundleID }
 
-    private static var iconsDirectory: URL? {
+    private var iconsDirectory: URL? {
         historyURL?.deletingLastPathComponent().appendingPathComponent("icons", isDirectory: true)
     }
 
@@ -253,7 +368,7 @@ final class NotificationInbox: NSObject, ObservableObject, UNUserNotificationCen
     }
 
     private func persistIcon(_ image: UIImage, key: String) {
-        guard savedMacStore?.savedMacsSeeded != true, let directory = Self.iconsDirectory,
+        guard savedMacStore?.savedMacsSeeded != true, let directory = iconsDirectory,
               let png = image.pngData() else { return }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                  attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
@@ -261,13 +376,13 @@ final class NotificationInbox: NSObject, ObservableObject, UNUserNotificationCen
                        options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
-    /// Only source icons referenced by the bounded inbox belong on disk. Reuse the App Support
+    /// Only source icons referenced by the inbox belong on disk. Reuse the App Support
     /// directory's backup exclusion and file protection; cold launches need no active stream to
-    /// show these icons. Forget, Clear and eviction all remove icons with no remaining entries.
+    /// show these icons. Forget and Clear remove icons with no remaining entries.
     private func syncSavedIcons() {
         let keys = Set(entries.filter { !$0.event.appBundleID.isEmpty }.map(iconKey))
         var shown = icons.filter { keys.contains($0.key) }
-        guard savedMacStore?.savedMacsSeeded != true, let directory = Self.iconsDirectory else {
+        guard savedMacStore?.savedMacsSeeded != true, let directory = iconsDirectory else {
             icons = shown
             return
         }
@@ -300,7 +415,6 @@ final class NotificationInbox: NSObject, ObservableObject, UNUserNotificationCen
         guard let item = pushEvent(userInfo), enabled else { return false }
         guard savedMacStore != nil else {
             pendingPushes.append((item.event, item.macID, tapped))
-            if pendingPushes.count > Self.limit { pendingPushes.removeFirst() }
             return false
         }
         let accepted = receive(item.event, from: item.macID)

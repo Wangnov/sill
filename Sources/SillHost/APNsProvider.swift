@@ -68,7 +68,8 @@ package actor APNsProvider {
         /// APNs accepted the request; this does not confirm presentation on the device.
         case accepted
         case invalidToken
-        case failure(String)
+        case transientFailure(String)
+        case permanentFailure(String)
     }
 
     private let configuration: APNsConfiguration
@@ -98,29 +99,29 @@ package actor APNsProvider {
     deinit { session.invalidateAndCancel() }
 
     package func send(_ event: MirroredNotification, macID: String, token: String) async -> SendResult {
-        guard !Task.isCancelled else { return .failure("APNs request cancelled.") }
-        if let problem = configuration.problem { return .failure(problem) }
+        guard !Task.isCancelled else { return .transientFailure("APNs request cancelled.") }
+        if let problem = configuration.problem { return .permanentFailure(problem) }
         // Tokens are hexadecimal bytes, but Apple explicitly says not to assume a fixed size.
         guard !token.isEmpty, token.utf8.count.isMultiple(of: 2), token.utf8.allSatisfy(Self.isHexDigit) else {
-            return .invalidToken
+            return .permanentFailure("The APNs device token is not valid hexadecimal data.")
         }
-        guard !macID.isEmpty else { return .failure("The Mac notification identity is missing.") }
+        guard !macID.isEmpty else { return .permanentFailure("The Mac notification identity is missing.") }
 
         let now = Date()
         let payload: Data
         let jwt: String
         do {
             payload = try Self.encodedPayload(for: event, macID: macID)
-            guard payload.count <= 4096 else { return .failure("APNs notification exceeds 4 KB.") }
+            guard payload.count <= 4096 else { return .permanentFailure("APNs notification exceeds 4 KB.") }
             jwt = try providerToken(at: now)
         } catch {
             // Neither encoding errors nor key errors are interpolated: they can contain input.
-            return .failure("The APNs notification could not be prepared.")
+            return .permanentFailure("The APNs notification could not be prepared.")
         }
 
         let host = configuration.environment == "sandbox" ? "api.sandbox.push.apple.com" : "api.push.apple.com"
         guard let url = URL(string: "https://\(host)/3/device/\(token)") else {
-            return .failure("The APNs endpoint could not be prepared.")
+            return .permanentFailure("The APNs endpoint could not be prepared.")
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -136,24 +137,34 @@ package actor APNsProvider {
         do {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else {
-                return .failure("APNs returned an invalid response.")
+                return .transientFailure("APNs returned an invalid response.")
             }
-            if http.statusCode == 200 { return .accepted }
             let reason = (try? JSONDecoder().decode(ErrorResponse.self, from: data))?.reason
-            if http.statusCode == 410 || (http.statusCode == 400 && reason == "BadDeviceToken") {
-                return .invalidToken
-            }
-            // Only documented constants reach settings/logs. Never echo the raw response,
-            // failing URL, payload, device token, provider token or private-key contents.
-            let suffix = reason.flatMap { Self.responseReasons.contains($0) ? ": \($0)" : nil } ?? ""
-            return .failure("APNs \(http.statusCode)\(suffix).")
+            return Self.classify(statusCode: http.statusCode, reason: reason)
         } catch let error as URLError {
-            if error.code == .cancelled { return .failure("APNs request cancelled.") }
-            return .failure("APNs network error (\(error.code.rawValue)).")
+            if error.code == .cancelled { return .transientFailure("APNs request cancelled.") }
+            return .transientFailure("APNs network error (\(error.code.rawValue)).")
         } catch {
-            return .failure("APNs request failed.")
+            return .transientFailure("APNs request failed.")
         }
-        // No automatic retries: the caller decides whether a later event is still relevant.
+        // This transport sends one request; the durable outbox owns retry deadlines and state.
+    }
+
+    /// Pure response classification, also used by offline tests. A topic mismatch is a
+    /// configuration failure: it does not establish that the device token is invalid.
+    package static func classify(statusCode: Int, reason: String?) -> SendResult {
+        if statusCode == 200 { return .accepted }
+        if statusCode == 410 || (statusCode == 400 && reason == "BadDeviceToken") {
+            return .invalidToken
+        }
+        // Only documented constants reach settings/logs. Never echo the raw response,
+        // failing URL, payload, device token, provider token or private-key contents.
+        let suffix = reason.flatMap { responseReasons.contains($0) ? ": \($0)" : nil } ?? ""
+        let message = "APNs \(statusCode)\(suffix)."
+        if statusCode == 429 || (500...599).contains(statusCode) {
+            return .transientFailure(message)
+        }
+        return .permanentFailure(message)
     }
 
     private func providerToken(at now: Date) throws -> String {

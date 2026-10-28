@@ -52,7 +52,28 @@ branch also carries the app project and data-ownership refactors; use `upstream/
 comparison base when preparing further contributions. The iOS app still needs your own team
 and bundle identifier in Signing & Capabilities for an actual device build.
 
-Session backgrounding, the experimental notification inbox and personal APNs configuration are
-documented in [session and notification continuity](session-and-notification-continuity.md).
-The fork's iOS targets use separate Debug/Release bundle IDs and have no upstream development
-team. Their push entitlement requires your own matching App ID and provisioning profile.
+Notification collection reads macOS's retained notification database and requires **Full Disk
+Access for Sill itself** in System Settings → Privacy & Security → Full Disk Access. This is
+separate from the Accessibility permission used for input control. Authorize the actual app
+being tested, then restart it: the daily script launches
+`.build/DerivedData/Build/Products/Debug/Sill Development.app`, while the build command above
+uses `.build/native-mac`. A successful read from Terminal or Codex does not verify Sill's access.
+
+Use a stable Apple Development signing identity for repeated notification testing. If an ad hoc
+rebuild loses access, reauthorize the exact current `.app` in Full Disk Access and restart it;
+an old app entry or an Accessibility grant does not establish that this build can read the store.
+The database adapter targets the private schema observed on macOS 27. macOS upgrades can change
+that schema, so rerun its fixtures and verify capture from a newly delivered system notification
+on the actual app after upgrading. The test notification button checks delivery, not collection.
+
+Session backgrounding, durable notification history, ordered reconnect replay, the per-device
+APNs outbox and inbox-clearing behavior are documented in
+[session and notification continuity](session-and-notification-continuity.md). The fork's iOS
+targets use separate Debug/Release bundle IDs and have no upstream development team. Their push
+entitlement requires your own matching App ID and provisioning profile; keep the provider's
+`.p8` outside the app and repository.
+
+Builds and offline checks are not device acceptance. Lifecycle recovery on the user's signed
+iOS fork and visible APNs alerts while backgrounded or locked have not yet been accepted on a
+real device. Record those results separately from compilation, local history tests and Apple's
+acceptance of an APNs request.

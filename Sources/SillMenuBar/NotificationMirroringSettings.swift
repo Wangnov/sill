@@ -6,8 +6,6 @@ import SillHostCore
 /// device message can turn on observation or supply a private key. All switches start off.
 struct NotificationMirroringSection: View {
     @Bindable var mirror: NotificationMirror
-    var allowAccessibility: () -> Void = {}
-
     var body: some View {
         Section {
             Toggle("Mirror Mac notifications", isOn: $mirror.enabled)
@@ -17,7 +15,11 @@ struct NotificationMirroringSection: View {
                 .fixedSize(horizontal: false, vertical: true)
             if mirror.enabled {
                 HStack {
-                    Button("Accessibility Settings…", action: allowAccessibility)
+                    Button("Full Disk Access…") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
                     Button("Send Test Notification") { mirror.sendTestNotification() }
                 }
             }
@@ -48,7 +50,7 @@ struct NotificationMirroringSection: View {
         } header: {
             Text("Notification mirroring (experimental)")
         } footer: {
-            Text("Reads newly observed text that Notification Center exposes through Accessibility. Hidden, grouped or brief banners can be missed; this is not a complete Mac notification feed. The test button checks the delivery path without requiring a Mac banner. Connected devices receive an inbox item. Background iOS alerts require a signed iOS build with Push Notifications, notification permission, and matching APNs topic and environment. APNs sends the mirrored title and body through Apple. Keep the .p8 file outside the app and repository; Sill stores only its path.")
+            Text("Sill reads macOS’s retained notification database without modifying it. This requires Full Disk Access, and the system’s database format may change with macOS updates. Notifications that disappear before they are saved may be missed. Sill stores its own notification history locally and can sync it when a paired device reconnects. The test button checks delivery without requiring a Mac notification. Background iOS alerts require a signed iOS fork with Push Notifications, notification permission, and matching APNs topic and environment. APNs sends the mirrored title and body through Apple. Keep the .p8 file outside the app and repository; Sill stores only its path.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

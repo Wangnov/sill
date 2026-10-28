@@ -54,6 +54,9 @@ struct NotificationInboxView: View {
                     if inbox.enabled {
                         permissionStatus
                     }
+                    if let problem = inbox.persistenceProblem {
+                        Text(problem).font(.footnote).foregroundStyle(.secondary)
+                    }
                 } footer: {
                     Text("Notifications are displayed by Sill. The source app’s icon appears in this inbox; it cannot replace Sill’s icon in system notifications.")
                 }
@@ -68,7 +71,7 @@ struct NotificationInboxView: View {
                             row(entry)
                         }
                     } footer: {
-                        Text("The latest 100 notifications stay on this device. Notifications cleared from iOS Notification Center before Sill opens may not appear here.")
+                        Text("Notification history stays on this device. Connect to your paired Mac to recover notifications missed while Sill was away. Clearing this inbox keeps its place in your Mac’s history.")
                     }
                 }
             }

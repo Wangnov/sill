@@ -595,6 +595,50 @@
         }
       }
     },
+    "APNs configured; pending notifications will be retried. Apple acceptance does not confirm device display.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs configured; pending notifications will be retried. Apple acceptance does not confirm device display."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs 已配置；待发送通知将重试。Apple 接受请求并不表示设备已显示通知。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs 已設定；待傳送通知將重試。Apple 接受請求並不表示裝置已顯示通知。"
+          }
+        }
+      }
+    },
+    "APNs delivery failed temporarily. The notification is saved and will be retried.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs delivery failed temporarily. The notification is saved and will be retried."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs 暂时发送失败。通知已保存，将自动重试。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs 暫時傳送失敗。通知已儲存，將自動重試。"
+          }
+        }
+      }
+    },
     "APNs environment": {
       "localizations": {
         "en": {
@@ -613,6 +657,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "APNs 環境"
+          }
+        }
+      }
+    },
+    "APNs retries are paused after repeated failures. The notification remains saved; renew the registration or provider settings to retry. Reconnecting Sill can recover its inbox history.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs retries are paused after repeated failures. The notification remains saved; renew the registration or provider settings to retry. Reconnecting Sill can recover its inbox history."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs 多次发送失败，重试已暂停。通知仍已保存；请更新注册信息或推送服务设置以重试。重新连接 Sill 可恢复收件箱历史。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "APNs 多次傳送失敗，重試已暫停。通知仍已儲存；請更新註冊資訊或推送服務設定以重試。重新連線 Sill 可還原收件匣記錄。"
           }
         }
       }
@@ -1851,6 +1917,28 @@
       }
     },
     "Frame rate limit": {},
+    "Full Disk Access…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Full Disk Access…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完全磁盘访问权限…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完全磁碟存取權限…"
+          }
+        }
+      }
+    },
     "General": {
       "localizations": {
         "en": {
@@ -2430,6 +2518,72 @@
         }
       }
     },
+    "Notification history contains an unreadable event. Reconnect after restoring its local database.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification history contains an unreadable event. Reconnect after restoring its local database."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知历史中有无法读取的事件。请恢复本地数据库后重新连接。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知記錄中有無法讀取的事件。請還原本機資料庫後重新連線。"
+          }
+        }
+      }
+    },
+    "Notification history could not be saved (SQLite error %d). Collection will retry without advancing its cursor.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification history could not be saved (SQLite error %d). Collection will retry without advancing its cursor."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法保存通知历史（SQLite 错误 %d）。采集将重试，且不会推进游标。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法儲存通知記錄（SQLite 錯誤 %d）。擷取將重試，且不會推進游標。"
+          }
+        }
+      }
+    },
+    "Notification history could not be saved. Collection will retry without advancing its cursor.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification history could not be saved. Collection will retry without advancing its cursor."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法保存通知历史。采集将重试，且不会推进游标。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法儲存通知記錄。擷取將重試，且不會推進游標。"
+          }
+        }
+      }
+    },
     "Notification mirroring (experimental)": {
       "localizations": {
         "en": {
@@ -2492,6 +2646,50 @@
           "stringUnit": {
             "state": "translated",
             "value": "通知鏡像測試"
+          }
+        }
+      }
+    },
+    "Notification store access is working. %lld stored notifications have unsupported content and were skipped.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification store access is working. %lld stored notifications have unsupported content and were skipped."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知数据库访问正常。%lld 条已保存的通知因内容格式不受支持而被跳过。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知資料庫存取正常。%lld 則已儲存的通知因內容格式不受支援而被略過。"
+          }
+        }
+      }
+    },
+    "Notification store access is working. Stored notifications are checked every 2 seconds.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification store access is working. Stored notifications are checked every 2 seconds."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知数据库访问正常。每 2 秒检查一次已保存的通知。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知資料庫存取正常。每 2 秒檢查一次已儲存的通知。"
           }
         }
       }
@@ -2692,6 +2890,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "開啟系統設定…"
+          }
+        }
+      }
+    },
+    "Opening the Mac notification store…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opening the Mac notification store…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在打开 Mac 通知数据库…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在開啟 Mac 通知資料庫…"
           }
         }
       }
@@ -3897,6 +4117,28 @@
         }
       }
     },
+    "Sill cannot read the notification store. Allow Sill in Full Disk Access, then restart Sill.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sill cannot read the notification store. Allow Sill in Full Disk Access, then restart Sill."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sill 无法读取通知数据库。请在“完全磁盘访问权限”中允许 Sill，然后重新启动 Sill。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sill 無法讀取通知資料庫。請在「完全磁碟存取權限」中允許 Sill，然後重新啟動 Sill。"
+          }
+        }
+      }
+    },
     "Sill couldn’t use its key in your keychain.": {
       "localizations": {
         "en": {
@@ -3937,6 +4179,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Sill 無法使用鑰匙圈中的金鑰。請結束並重新開啟 Sill；若鑰匙圈詢問，請選擇「永遠允許」。"
+          }
+        }
+      }
+    },
+    "Sill reads macOS’s retained notification database without modifying it. This requires Full Disk Access, and the system’s database format may change with macOS updates. Notifications that disappear before they are saved may be missed. Sill stores its own notification history locally and can sync it when a paired device reconnects. The test button checks delivery without requiring a Mac notification. Background iOS alerts require a signed iOS fork with Push Notifications, notification permission, and matching APNs topic and environment. APNs sends the mirrored title and body through Apple. Keep the .p8 file outside the app and repository; Sill stores only its path.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sill reads macOS’s retained notification database without modifying it. This requires Full Disk Access, and the system’s database format may change with macOS updates. Notifications that disappear before they are saved may be missed. Sill stores its own notification history locally and can sync it when a paired device reconnects. The test button checks delivery without requiring a Mac notification. Background iOS alerts require a signed iOS fork with Push Notifications, notification permission, and matching APNs topic and environment. APNs sends the mirrored title and body through Apple. Keep the .p8 file outside the app and repository; Sill stores only its path."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sill 只读取 macOS 保留的通知数据库，不会修改它。这需要完全磁盘访问权限，系统数据库格式可能随 macOS 更新而改变。保存前已消失的通知可能会遗漏。Sill 将自己的通知历史保存在本地，配对设备重新连接时可以同步。测试按钮可在没有 Mac 通知时检查发送链路。iOS 后台提醒需要已签名且启用推送通知的 iOS fork、通知权限，以及匹配的 APNs 主题和环境。APNs 会通过 Apple 发送转发的标题和正文。请将 .p8 文件保存在应用和仓库之外；Sill 只保存其路径。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sill 只讀取 macOS 保留的通知資料庫，不會修改它。這需要完全磁碟存取權限，系統資料庫格式可能隨 macOS 更新而改變。儲存前已消失的通知可能會遺漏。Sill 將自己的通知記錄儲存在本機，配對裝置重新連線時可以同步。測試按鈕可在沒有 Mac 通知時檢查傳送流程。iOS 背景提醒需要已簽署且啟用推播通知的 iOS fork、通知權限，以及相符的 APNs 主題和環境。APNs 會透過 Apple 傳送轉送的標題和內文。請將 .p8 檔案儲存在應用程式和儲存庫之外；Sill 只儲存其路徑。"
           }
         }
       }
@@ -4290,6 +4554,72 @@
     "The hardware encoder is busy or not answering, so streams use the software encoder: up to 60 fps at Standard resolution. Sill switches back by itself once it keeps up again.": {},
     "The hardware encoder is stuck, so streams use the software encoder: up to 60 fps at Standard resolution. Restarting the Mac fixes this.": {},
     "The login item and the permissions follow this copy of Sill. Keep one copy, in Applications.": {},
+    "The notification store could not be opened. Check Sill’s Full Disk Access permission and try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The notification store could not be opened. Check Sill’s Full Disk Access permission and try again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法打开通知数据库。请检查 Sill 的完全磁盘访问权限，然后重试。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法開啟通知資料庫。請檢查 Sill 的完全磁碟存取權限，然後重試。"
+          }
+        }
+      }
+    },
+    "The notification store could not be read (SQLite error %d). Sill will retry.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The notification store could not be read (SQLite error %d). Sill will retry."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法读取通知数据库（SQLite 错误 %d）。Sill 将重试。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法讀取通知資料庫（SQLite 錯誤 %d）。Sill 將重試。"
+          }
+        }
+      }
+    },
+    "The notification store could not be read. Sill will retry.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The notification store could not be read. Sill will retry."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法读取通知数据库。Sill 将重试。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法讀取通知資料庫。Sill 將重試。"
+          }
+        }
+      }
+    },
     "This Mac can’t be reached while it’s asleep. While a device is connected from away, Sill keeps it from going to sleep by itself.": {},
     "This code expired.": {
       "localizations": {
@@ -4336,6 +4666,28 @@
       }
     },
     "This is the Mac’s name.": {},
+    "This macOS notification store format is not supported. No notifications were collected.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This macOS notification store format is not supported. No notifications were collected."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不支持此 macOS 通知数据库格式，未采集任何通知。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不支援此 macOS 通知資料庫格式，未擷取任何通知。"
+          }
+        }
+      }
+    },
     "This network. Use it with a VPN into your home network, such as WireGuard on your router.": {},
     "This test came from your Mac. Live delivery updates Sill’s inbox; configured APNs can also show an iOS alert.": {
       "localizations": {

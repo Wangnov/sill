@@ -21,6 +21,7 @@ package final class NotificationMirror {
         didSet {
             guard apns != oldValue else { return }
             if let data = try? JSONEncoder().encode(apns) { defaults.set(data, forKey: Key.apns) }
+            do { try historyStore().retryFailures() } catch { historyFailure(error) }
             apply()
         }
     }
@@ -29,13 +30,14 @@ package final class NotificationMirror {
     package private(set) var registeredDeviceCount = 0
 
     @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private let historyURL: URL
     @ObservationIgnored private let collector = NotificationMirrorCollector()
     @ObservationIgnored private var provider: APNsProvider?
     @ObservationIgnored private var macID = ""
     @ObservationIgnored private var isPaired: (@MainActor (Data) -> Bool)?
-    @ObservationIgnored private var onNotification: (@MainActor (MirroredNotification) -> Void)?
+    @ObservationIgnored private var onHistoryAvailable: (@MainActor () -> Void)?
     @ObservationIgnored private var registrations: [String: Registration] = [:]
-    @ObservationIgnored private var pending: [MirroredNotification] = []
+    @ObservationIgnored private var history: NotificationHistoryStore?
     @ObservationIgnored private var deliveryTask: Task<Void, Never>?
     @ObservationIgnored private var deliveryGeneration = 0
 
@@ -55,8 +57,9 @@ package final class NotificationMirror {
         let revision: UUID?
     }
 
-    package init(defaults: UserDefaults = .standard) {
+    package init(defaults: UserDefaults = .standard, historyURL: URL = NotificationHistoryStore.defaultURL) {
         self.defaults = defaults
+        self.historyURL = historyURL
         enabled = defaults.bool(forKey: Key.enabled)
         pushEnabled = defaults.bool(forKey: Key.pushEnabled)
         apns = defaults.data(forKey: Key.apns).flatMap { try? JSONDecoder().decode(APNsConfiguration.self, from: $0) }
@@ -71,11 +74,11 @@ package final class NotificationMirror {
     /// Called once the coordinator has its host identity. The closure must consult RemoteAccess's
     /// current list, rather than capture a snapshot taken when the client first connected.
     package func start(macID: String, isPaired: @escaping @MainActor (Data) -> Bool,
-                       onNotification: @escaping @MainActor (MirroredNotification) -> Void) {
+                       onHistoryAvailable: @escaping @MainActor () -> Void) {
         self.macID = macID
         self.isPaired = isPaired
-        self.onNotification = onNotification
-        collector.onNotification = { [weak self] in self?.receive($0) }
+        self.onHistoryAvailable = onHistoryAvailable
+        collector.onSnapshot = { [weak self] in self?.receiveSnapshot($0) }
         collector.onStatus = { [weak self] in self?.collectorStatus = $0 }
         pruneUnpairedRegistrations()
         apply()
@@ -86,10 +89,9 @@ package final class NotificationMirror {
         deliveryGeneration += 1
         deliveryTask?.cancel()
         deliveryTask = nil
-        pending = []
         macID = ""
         isPaired = nil
-        onNotification = nil
+        onHistoryAvailable = nil
     }
 
     /// The server passes only a fingerprint from an authenticated TLS ClientRoute. This second
@@ -121,21 +123,22 @@ package final class NotificationMirror {
         registrations[key] = Registration(fingerprint: fingerprint, token: token, topic: topic,
                                           environment: environment, revision: UUID())
         saveRegistrations()
+        do { try historyStore().retryFailures(fingerprint: key) } catch { historyFailure(error) }
+        deliverPending()
         if pushEnabled, (topic != apns.topic || environment != apns.environment) {
             deliveryStatus = String(localized: "A paired device's APNs topic or environment does not match this Mac's provider settings.")
         }
         return true
     }
 
-    /// A future public notification source can use the same path. This method never attempts to
-    /// read hidden system data; the experimental AX collector and the explicit test button use it.
+    /// The explicit test follows the same durable path as a collected notification.
     package func receive(_ notification: MirroredNotification) {
         guard enabled, !macID.isEmpty else { return }
-        onNotification?(notification)
-        guard pushEnabled, provider != nil else { return }
-        pending.append(notification)
-        if pending.count > 30 { pending.removeFirst(pending.count - 30) }
-        deliverPending()
+        do {
+            _ = try historyStore().append(notification, fingerprints: pushRecipients())
+            onHistoryAvailable?()
+            deliverPending()
+        } catch { historyFailure(error) }
     }
 
     package func sendTestNotification() {
@@ -157,7 +160,6 @@ package final class NotificationMirror {
         deliveryGeneration += 1
         deliveryTask?.cancel()
         deliveryTask = nil
-        pending = []
         provider = nil
         guard enabled else {
             collector.stop()
@@ -171,6 +173,7 @@ package final class NotificationMirror {
             return
         }
         collector.start()
+        onHistoryAvailable?()
         guard pushEnabled else {
             deliveryStatus = String(localized: "Live inbox only. APNs delivery is off.")
             return
@@ -180,7 +183,8 @@ package final class NotificationMirror {
             return
         }
         provider = APNsProvider(configuration: apns)
-        deliveryStatus = String(localized: "APNs configured; awaiting a paired device registration and a notification. Delivery is not verified yet.")
+        deliveryStatus = String(localized: "APNs configured; pending notifications will be retried. Apple acceptance does not confirm device display.")
+        deliverPending()
     }
 
     private func saveRegistrations() {
@@ -188,42 +192,104 @@ package final class NotificationMirror {
         if let data = try? JSONEncoder().encode(registrations) { defaults.set(data, forKey: Key.registrations) }
     }
 
+    private func historyStore() throws -> NotificationHistoryStore {
+        if let history { return history }
+        let opened = try NotificationHistoryStore(url: historyURL)
+        history = opened
+        return opened
+    }
+
+    private func historyFailure(_ error: Error) {
+        deliveryStatus = (error as? LocalizedError)?.errorDescription
+            ?? String(localized: "Notification history could not be saved. Collection will retry without advancing its cursor.")
+    }
+
+    private func pushRecipients() -> [String] {
+        pruneUnpairedRegistrations()
+        // Retain pending events even while push is off or the provider configuration is incomplete.
+        return Array(registrations.keys)
+    }
+
+    private func receiveSnapshot(_ snapshot: NotificationStoreSnapshot) {
+        guard enabled, !macID.isEmpty else { return }
+        do {
+            let events = try historyStore().ingest(snapshot, fingerprints: pushRecipients())
+            if !events.isEmpty { onHistoryAvailable?() }
+            deliverPending()
+        } catch { historyFailure(error) }
+    }
+
+    /// Per-connection replay calls this in bounded batches. Persistence failure throws instead of
+    /// making an unreadable history look empty and switching that client to live delivery.
+    package func replayStart(for subscription: NotificationSubscription) throws -> Int64 {
+        try historyStore().replayStart(historyID: subscription.historyID, afterSequence: subscription.afterSequence)
+    }
+
+    package func replay(after sequence: Int64) throws -> [MirroredNotification] {
+        // The coordinator pauses its drain while disabled and never treats this as exhaustion.
+        guard enabled else { return [] }
+        return try historyStore().events(after: sequence)
+    }
+
+    package func replayFailed(_ error: Error) { historyFailure(error) }
+
     private func deliverPending() {
-        guard deliveryTask == nil, let provider else { return }
+        guard deliveryTask == nil, let provider, enabled, pushEnabled else { return }
         let generation = deliveryGeneration
         deliveryTask = Task { [weak self] in
             guard let self else { return }
-            while !Task.isCancelled, self.deliveryGeneration == generation, self.enabled, self.pushEnabled, !self.pending.isEmpty {
-                let event = self.pending.removeFirst()
-                self.pruneUnpairedRegistrations()
-                let targets = self.registrations.values.filter { $0.topic == self.apns.topic && $0.environment == self.apns.environment }
-                if targets.isEmpty { self.deliveryStatus = String(localized: "No paired device has registered for this APNs topic and environment.") }
-                for target in targets {
-                    // Recheck immediately before each request, including after another target's
-                    // asynchronous send. A forgotten device receives no later queued events.
-                    guard !Task.isCancelled, self.deliveryGeneration == generation, self.enabled, self.pushEnabled else { break }
-                    let key = target.fingerprint.base64EncodedString()
-                    guard self.isPaired?(target.fingerprint) == true,
-                          let sending = self.registrations[key], sending.token == target.token,
-                          sending.topic == target.topic, sending.environment == target.environment else { continue }
-                    // A prior target's await may have refreshed this same token. Use the current
-                    // revision for this request; the snapshot selects recipients, not revisions.
-                    let result = await provider.send(event, macID: self.macID, token: sending.token)
-                    guard !Task.isCancelled, self.deliveryGeneration == generation else { break }
-                    switch result {
-                    case .accepted:
-                        self.deliveryStatus = String(localized: "Apple accepted the last APNs request. Device display is not confirmed.")
-                    case .invalidToken:
-                        if self.registrations[key]?.token == sending.token,
-                           self.registrations[key]?.revision == sending.revision {
-                            self.registrations[key] = nil
-                            self.saveRegistrations()
-                        }
-                        self.deliveryStatus = String(localized: "Apple rejected an expired or invalid device token; waiting for that device to register again.")
-                    case .failure(let problem):
-                        self.deliveryStatus = problem
+            while !Task.isCancelled, self.deliveryGeneration == generation, self.enabled, self.pushEnabled {
+                do {
+                    self.pruneUnpairedRegistrations()
+                    let targets = self.registrations.filter {
+                        $0.value.topic == self.apns.topic && $0.value.environment == self.apns.environment
                     }
-                }
+                    let attempts = try self.historyStore().duePushes(at: Date(), fingerprints: Array(targets.keys))
+                    for attempt in attempts {
+                        // No await occurs between these checks and entering provider.send. Each
+                        // request uses the current registration revision, never a stale token snapshot.
+                        guard !Task.isCancelled, self.deliveryGeneration == generation, self.enabled, self.pushEnabled else { break }
+                        let key = attempt.fingerprint
+                        guard let sending = self.registrations[key], self.isPaired?(sending.fingerprint) == true,
+                              sending.topic == self.apns.topic, sending.environment == self.apns.environment else { continue }
+                        let result = await provider.send(attempt.event, macID: self.macID, token: sending.token)
+                        guard !Task.isCancelled, self.deliveryGeneration == generation else { break }
+                        // A newer registration owns pending delivery now; an old request's result
+                        // must neither remove that registration nor settle its pending retry.
+                        guard self.registrations[key]?.revision == sending.revision,
+                              self.registrations[key]?.token == sending.token else { continue }
+                        switch result {
+                        case .accepted:
+                            try self.historyStore().finish(attempt, state: "accepted")
+                            self.deliveryStatus = String(localized: "Apple accepted the last APNs request. Device display is not confirmed.")
+                        case .invalidToken:
+                            try self.historyStore().finish(attempt, state: "permanent", problem: "Invalid device token")
+                            if self.registrations[key]?.token == sending.token,
+                               self.registrations[key]?.revision == sending.revision {
+                                self.registrations[key] = nil
+                                self.saveRegistrations()
+                            }
+                            self.deliveryStatus = String(localized: "Apple rejected an expired or invalid device token; waiting for that device to register again.")
+                        case .permanentFailure(let problem):
+                            try self.historyStore().finish(attempt, state: "permanent", problem: problem)
+                            self.deliveryStatus = problem
+                        case .transientFailure(let problem):
+                            let delays: [TimeInterval] = [5, 15, 60, 300, 900, 3600]
+                            if attempt.attempts < delays.count {
+                                let retry = Date().addingTimeInterval(delays[attempt.attempts])
+                                try self.historyStore().finish(attempt, state: "retry", nextAttempt: retry, problem: problem)
+                                self.deliveryStatus = String(localized: "APNs delivery failed temporarily. The notification is saved and will be retried.")
+                            } else {
+                                try self.historyStore().finish(attempt, state: "paused", problem: problem)
+                                self.deliveryStatus = String(localized: "APNs retries are paused after repeated failures. The notification remains saved; renew the registration or provider settings to retry. Reconnecting Sill can recover its inbox history.")
+                            }
+                        }
+                    }
+                    if !attempts.isEmpty { continue }
+                } catch { self.historyFailure(error) }
+                // A bounded polling interval also notices pairing/configuration changes without
+                // one timer per notification. Retry deadlines and failure states live in SQLite.
+                do { try await Task.sleep(for: .seconds(5)) } catch { break }
             }
             if self.deliveryGeneration == generation { self.deliveryTask = nil }
         }

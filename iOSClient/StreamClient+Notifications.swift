@@ -11,13 +11,16 @@ final class NotificationSessionRelay {
     weak var inbox: NotificationInbox?
     var generation: Int?
     private var changes: [AnyCancellable] = []
-    private var lastSent: NotificationSubscription?
+    private var lastSettings: NotificationSubscription?
     private weak var lastConnection: NWConnection?
 
     init(client: StreamClient, inbox: NotificationInbox) {
         self.client = client
         self.inbox = inbox
-        changes.append(inbox.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.update() })
+        // Inbox rows and their saved checkpoint change during replay. Observing objectWillChange
+        // would resubscribe from each new checkpoint and start overlapping replay loops.
+        changes.append(inbox.$enabled.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.update() })
+        changes.append(inbox.$pushRegistration.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.update() })
         changes.append(client.savedMacStore.$snapshot.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.update() })
     }
 
@@ -25,7 +28,7 @@ final class NotificationSessionRelay {
         guard let client, let inbox, (generation ?? 0) >= 1, client.connected,
               let connection = client.connection, let key = RemoteTLS.peerFingerprint(connection) else { return }
         let paired = client.session?.macID.flatMap { client.savedMac($0)?.fingerprintData } == key
-        let subscription: NotificationSubscription
+        var subscription: NotificationSubscription
         if inbox.enabled, paired {
             let push = inbox.pushRegistration
             subscription = NotificationSubscription(enabled: true, pushToken: push?.token,
@@ -33,18 +36,22 @@ final class NotificationSessionRelay {
         } else {
             // A switch turned off, or this App forgot the Mac while its TLS session was open.
             // Disabling uses that authenticated session; it never registers an unpaired peer.
-            guard lastSent?.enabled == true || paired else { return }
+            guard lastSettings?.enabled == true || paired else { return }
             subscription = NotificationSubscription(enabled: false)
         }
-        guard lastConnection !== connection || lastSent != subscription else { return }
+        guard lastConnection !== connection || lastSettings != subscription else { return }
         lastConnection = connection
-        lastSent = subscription
+        lastSettings = subscription
+        if subscription.enabled, let macID = client.session?.macID, let cursor = inbox.historyCursor(for: macID) {
+            subscription.historyID = cursor.historyID
+            subscription.afterSequence = cursor.lastSequence
+        }
         client.send(.notificationSubscription, payload: Wire.encode(subscription))
     }
 
     func reset() {
         generation = nil
-        lastSent = nil
+        lastSettings = nil
         lastConnection = nil
         // Ending a stream does not disable push. The Mac's registration belongs to its paired
         // device, so notifications can reach iOS after this window/socket is gone.
@@ -52,7 +59,7 @@ final class NotificationSessionRelay {
 
     func moved() {
         lastConnection = nil
-        lastSent = nil
+        lastSettings = nil
         update()
     }
 }
@@ -72,7 +79,9 @@ extension StreamClient {
     func notificationSessionMoved() { notificationRelay?.moved() }
 
     func receiveMirroredNotification(_ data: Data, connectionKey: Data?) {
-        guard data.count <= 16_384, let id = session?.macID, let saved = savedMac(id),
+        // StreamClient already enforces the wire's 4 MiB non-video message cap. Notification
+        // bodies use that same bound; a legitimate full body must not disappear at 16 KiB.
+        guard let id = session?.macID, let saved = savedMac(id),
               saved.fingerprintData == connectionKey, connectionKey != nil,
               let event = Wire.decode(MirroredNotification.self, from: data) else { return }
         // Pairing can happen after this session's catalog arrived. Reuse its already-decoded

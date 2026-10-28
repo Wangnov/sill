@@ -2102,6 +2102,50 @@
         }
       }
     },
+    "Notification history could not be saved. Reconnect to recover it from your Mac.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification history could not be saved. Reconnect to recover it from your Mac."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法保存通知历史。请重新连接，以从 Mac 恢复。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法儲存通知記錄。請重新連線，以從 Mac 還原。"
+          }
+        }
+      }
+    },
+    "Notification history stays on this device. Connect to your paired Mac to recover notifications missed while Sill was away. Clearing this inbox keeps its place in your Mac’s history.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification history stays on this device. Connect to your paired Mac to recover notifications missed while Sill was away. Clearing this inbox keeps its place in your Mac’s history."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知历史保存在此设备上。连接到已配对的 Mac，可恢复 Sill 未连接期间错过的通知。清空收件箱不会重置 Mac 通知历史的同步位置。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知記錄儲存在此裝置上。連線到已配對的 Mac，可還原 Sill 未連線期間錯過的通知。清空收件匣不會重設 Mac 通知記錄的同步位置。"
+          }
+        }
+      }
+    },
     "Notifications": {
       "localizations": {
         "en": {
