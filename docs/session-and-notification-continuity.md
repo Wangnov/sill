@@ -485,7 +485,11 @@ acceptance. Apple accepting a push is not proof of device display; record those 
 The system-store retention/schema limits above remain even after device tests pass.
 
 The iPhone-origin loop-prevention change has not yet completed a live end-to-end check on this
-Mac: Apple's first-connection authentication succeeded, but iPhone Mirroring then timed out.
+Mac. An earlier screen-mirroring timeout was incorrectly treated as the notification prerequisite:
+Apple's notification syncing continues without an active screen session, including when the phone
+is not nearby. The independent notification switch was found off under General → AirDrop &
+Continuity → Notifications & Live Activities. Enabling it temporarily and sending a marked iOS
+APNs did not yet produce an observed Mac reflection; that absence is not a filtering pass.
 Native Mac control notifications, including one whose body ends with the localized origin wording,
 reached the actual phone once each after foreground history replay. That control proves normal
 delivery and guards against text-based false positives; it does not prove the reverse Apple path.

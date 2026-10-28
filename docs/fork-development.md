@@ -89,6 +89,8 @@ showed a cached source icon with a small Sill badge, and a nonempty subtitle rem
 Newly captured Mac notifications also displayed their source avatars after the host resumed.
 Verify lifecycle recovery, notification taps and locked presentation separately from these
 observations, compilation, local history tests and Apple's acceptance of an APNs request. The
-new iPhone-origin loop prevention still needs an end-to-end device check: Apple's first-connection
-authentication succeeded on this Mac, but iPhone Mirroring then timed out. Native Mac control
-notifications, including a body ending in the iPhone-origin wording, reached the phone once each.
+new iPhone-origin loop prevention still needs an end-to-end device check. Notification syncing
+continues independently of an active iPhone Mirroring screen session; a screen connection timeout
+does not diagnose its notification channel. On this macOS build, its switch is also reachable via
+General → AirDrop & Continuity → Notifications & Live Activities. Native Mac control notifications,
+including a body ending in the iPhone-origin wording, reached the phone once each.
