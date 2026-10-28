@@ -29,6 +29,9 @@ struct NotificationStoreReader: Sendable {
     let url: URL
     var appNames: [String: String] = [:]
     var excludedBundleIDs: Set<String> = []
+    /// The mirror consumes its own source metadata only to identify an already captured banner.
+    /// Other callers retain the original exclusion policy; no own notification becomes new mail.
+    var includeMirrorSources = false
 
     enum ReadError: LocalizedError {
         case accessDenied
@@ -125,7 +128,8 @@ struct NotificationStoreReader: Sendable {
             // The system app table is authoritative. A web app or extension may name a different
             // originating app in its payload; use that only when the joined identifier is absent.
             guard let bundleID = row.bundleID ?? payloadBundleID, !bundleID.isEmpty else { skipped += 1; continue }
-            if excludedBundleIDs.contains(bundleID) || bundleID == "me.saffer.sill" || bundleID.hasPrefix("me.saffer.sill.") { continue }
+            if excludedBundleIDs.contains(bundleID) || (!includeMirrorSources &&
+                (bundleID == "me.saffer.sill" || bundleID.hasPrefix("me.saffer.sill."))) { continue }
             // Some Apple notifications contain localization descriptors instead of plain text.
             // Do not stringify an archive/dictionary into a message or leak it into diagnostics.
             guard let title = text(request, "titl"), let subtitle = text(request, "subt"),

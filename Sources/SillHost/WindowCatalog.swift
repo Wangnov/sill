@@ -192,6 +192,19 @@ final class WindowCatalog {
     /// Every icon we know, for a client that just connected.
     var allIcons: [(bundleID: String, png: Data)] { icons.map { ($0.key, $0.value) } }
 
+    /// Resolve a notification source by its exact bundle ID. Launch Services also knows apps
+    /// outside the scanned folders, including development builds. An unresolved source has no
+    /// icon; passing an empty path to `icon(forFile:)` would give it a generic, misleading one.
+    func iconForNotification(bundleID: String) -> Data? {
+        guard !bundleID.isEmpty else { return nil }
+        if let cached = icons[bundleID] { return cached }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID),
+              Bundle(url: url)?.bundleIdentifier == bundleID,
+              let png = Self.png(NSWorkspace.shared.icon(forFile: url.path), size: 64) else { return nil }
+        icons[bundleID] = png
+        return png
+    }
+
     // MARK: Polling (only while a client is connected)
 
     private func startPolling() {

@@ -107,13 +107,38 @@ the alias is a conservative correlation, not a universal exactly-once guarantee.
 request for an event is not rearmed when the database enriches that same event.
 
 AX-only events are archived and synchronized over paired TLS immediately, but do not create
-APNs outbox work until the database identifies their posting app. Otherwise a Sill alert mirrored
-back from an iPhone could trigger another Sill alert. Own Sill bundle IDs and configured/registered
+APNs outbox work until their posting app is identified. The retained database is the primary
+source. On the tested macOS 27 build, a narrow `usernoted` log stream also supplies exact source
+metadata when a notification is removed or replaced:
+
+```text
+_removeDelivered: Removing [full-notification-UUID] from posting.bundle.id
+```
+
+This full UUID is the AX group identifier. It is distinct from the abbreviated UUID and
+caller-supplied request ID in ordinary delivery logs; those are never used for attribution.
+The metadata stream can identify a replaced original that was captured through AX but never
+reached the retained database. It revises that same archive ID, preserves its text and observed
+time, and creates its first APNs outbox entry. Metadata arriving before AX is saved without
+creating a notification; a later banner supplies the content. Subsequent AX revisions retain
+the confirmed source, while a matching database occurrence can still correct it. Conflicting
+log sources for one full UUID remain unassigned until the database resolves them.
+
+Requiring an identified source prevents a Sill alert mirrored back from an iPhone from triggering
+another Sill alert. Own Sill bundle IDs and configured/registered
 push topics are excluded from background delivery; explicit test-button events are an exception.
-An AX-only occurrence that never reaches the database therefore remains recoverable in the inbox,
-without a guaranteed background system alert or source icon. Failed AX archive writes retain the
-observation in memory and retry every two seconds; a process exit during persistent disk failure
-can still lose that unwritten observation.
+Sending rechecks the current archive/outbox revision after waiting on any earlier request, so a
+late source correction cannot pass the source gate using a stale batch. An accepted event stays
+accepted across source corrections. Source icons use the existing cache or the exact bundle's
+Launch Services registration, including development apps outside the applications directories.
+
+The log message is private OS output, not a supported Apple notification API. Its absence,
+redaction or a changed format leaves the event unknown; no partial UUID or text match substitutes
+for it. The optional stream runs only while mirroring is enabled, stops its own child on shutdown,
+and reports failure after bounded retries. It does not read old logs on startup. An occurrence
+missed by both identity sources stays in the live inbox without a guaranteed background alert or
+source icon. Failed archive/source writes are retried every two seconds; a process exit during
+persistent disk failure can still lose unwritten observations.
 
 The Mac stores this decoded history in its own
 `~/Library/Application Support/<current-bundle-id>/NotificationMirror/history.sqlite`.
@@ -320,6 +345,27 @@ delivery, an actual iPhone fork inbox, or visible background/locked APNs present
 
 ## Validation boundaries
 
+### Exact source recovery acceptance
+
+On 2026-10-28, macOS 27.0 (26A425) emitted an exact `_removeDelivered` line for a replaced
+synthetic original that had never reached the retained store. A second run linked the production
+source observer and history store into an isolated live harness. The still-authorized previous
+Sill build supplied its real AX observations through a read-only view of Sill's own archive;
+the harness never read the system notification database or called Accessibility itself.
+
+That run imported seven AX events and recovered the replaced original's posting bundle from the
+live log stream about 6.28 seconds after the AX observation. Its ID, body hash and observed date
+were unchanged, and exactly one fake-recipient outbox entry was created. The log child was still
+running when the callback arrived and was stopped when the harness ended. No APNs provider was
+created. A separate fixture cleanup established the batch form: eleven full UUIDs, separated by
+comma-space inside the brackets, share the bundle following `from`. The parser accepts that
+entire validated list or none of it.
+
+The new native Mac app builds and all 61 local check suites pass, including 41 source/pipe checks.
+A subsequent batch live run received 26 source callbacks but imported no AX events after the Mac
+locked; it does not establish full capture coverage. These runs verify the source/store path,
+not the freshly signed app's permissions, TLS icon presentation, or real iPhone/APNs delivery.
+
 The repository includes separate checks for the distinct parts of this feature:
 
 - `Tests/checks/background-session/run.sh`: session intent persistence, source selection and
@@ -329,6 +375,8 @@ The repository includes separate checks for the distinct parts of this feature:
   revisions and store resets. This does not open the person's notification database.
 - `Tests/checks/notification-banner/run.sh`: offline parsing of AX UUID and text fixtures; it
   does not observe a live Accessibility tree or establish live capture coverage.
+- `Tests/checks/notification-source/run.sh`: exact synthetic removal metadata, split pipe lines,
+  immediate short-line delivery while the child stays alive, and ordered delivery before EOF.
 - `Tests/checks/notification-history/run.sh`: atomic baseline/archive writes and rollback, restart
   idempotence, exact UUID alias binding and ambiguity, equal-text deliveries, body revisions,
   ordered replay, durable retry state, disabled/resume behavior, legacy JSON and offline APNs

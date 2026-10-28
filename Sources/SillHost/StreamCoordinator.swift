@@ -2755,7 +2755,7 @@ package final class StreamCoordinator {
 
     private func sendNotification(_ event: MirroredNotification, to connection: NWConnection) {
         let now = Date().timeIntervalSince1970
-        if let (_, png) = catalog.allIcons.first(where: { $0.0 == event.appBundleID }) {
+        if let png = catalog.iconForNotification(bundleID: event.appBundleID) {
             server.send(StreamMessage(kind: .appIcon, timestamp: now, isKeyframe: false,
                                       payload: ImageBlob.encodeIcon(bundleID: event.appBundleID, png: png)), to: connection)
         }

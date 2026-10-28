@@ -4360,6 +4360,50 @@
         }
       }
     },
+    "Source recovery for replaced notifications is connected.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Source recovery for replaced notifications is connected."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已连接通知来源补全，可识别被替换的通知。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已連線通知來源補全，可識別被替換的通知。"
+          }
+        }
+      }
+    },
+    "Source recovery is unavailable. Live banners and stored notifications still work.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Source recovery is unavailable. Live banners and stored notifications still work."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知来源补全暂不可用。实时横幅和已保存通知仍可正常收集。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知來源補全暫不可用。即時橫幅和已儲存通知仍可正常收集。"
+          }
+        }
+      }
+    },
     "Standard": {
       "localizations": {
         "en": {

@@ -11,6 +11,12 @@ struct NotificationBannerObservation: Sendable, Equatable {
     let displayAppName: String?
 }
 
+/// An exact identity hint for an existing AX UUID, never a new notification occurrence.
+struct NotificationSourceAttribution: Equatable, Sendable {
+    let uuid: String
+    let bundleID: String
+}
+
 /// Pure parsing shared by the live banner adapter and offline fixtures.
 enum NotificationBannerParser {
     struct Line: Sendable, Equatable {

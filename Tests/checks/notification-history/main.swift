@@ -34,6 +34,153 @@ func snapshot(_ records: [NotificationStoreRecord]) -> NotificationStoreSnapshot
     NotificationStoreSnapshot(records: records, skippedRecordCount: 0)
 }
 
+func checkBannerSourceHistory(root: URL) throws {
+    func observation(_ uuid: String, body: String = "AX original body", observedAt: TimeInterval = 1_234) -> NotificationBannerObservation {
+        NotificationBannerObservation(sourceUUID: uuid, title: "AX title", subtitle: "AX subtitle",
+                                      body: body, observedAt: observedAt, displayAppName: nil)
+    }
+    func location(_ name: String) -> URL { root.appendingPathComponent("banner-source-" + name + "/history.sqlite") }
+
+    let uuid = String(repeating: "6", count: 32)
+    let url = location("enrichment")
+    let store = try NotificationHistoryStore(url: url)
+    _ = try store.ingest(snapshot([]), fingerprints: [])
+    let original = try store.ingestBanner(observation(uuid), fingerprints: [])!
+    let enriched = try store.enrichBannerSource(uuid: uuid, bundleID: "test.exact-source", appName: "Exact App",
+                                               fingerprints: ["pending", "accepted", "recover", "withheld"])!
+    check(enriched.id == original.id && enriched.sequence == 2 && enriched.appBundleID == "test.exact-source" && enriched.appName == "Exact App",
+          "exact log source enriches the existing AX occurrence")
+    check(enriched.title == original.title && enriched.subtitle == original.subtitle && enriched.body == original.body && enriched.date == original.date,
+          "source enrichment preserves AX content and observation time")
+    check(count(url, "SELECT count(*) FROM notification_alias WHERE uuid='\(uuid)' AND source_id IS NULL") == 1,
+          "exact source metadata does not bind an AX alias to a DB delivery occurrence")
+    check(try store.duePushes(at: Date(), fingerprints: ["pending"]).map { $0.event.id } == [original.id],
+          "newly attributed AX occurrence enters the requested recipient outbox")
+    let staleAttempt = try store.duePushes(at: Date(), fingerprints: ["pending"])[0]
+    check(try store.isCurrent(staleAttempt), "current pending source revision is eligible before send")
+    let acceptedAttempt = try store.duePushes(at: Date(), fingerprints: ["accepted"])[0]
+    try store.finish(acceptedAttempt, state: "accepted")
+    check(try !store.isCurrent(acceptedAttempt), "accepted request cannot be sent again from an old batch")
+    for fingerprint in ["recover", "withheld"] {
+        try store.finish(try store.duePushes(at: Date(), fingerprints: [fingerprint])[0], state: "suppressed")
+    }
+    check(try store.enrichBannerSource(uuid: uuid, bundleID: "test.exact-source", appName: "Exact App", fingerprints: ["pending", "accepted"]) == nil,
+          "identical source attribution is idempotent")
+    check(count(url, "SELECT CAST(value AS INTEGER) FROM metadata WHERE key='sequence'") == 2,
+          "identical source attribution consumes no sequence")
+    let renamed = try store.enrichBannerSource(uuid: uuid, bundleID: "test.exact-source", appName: "Exact App Renamed", fingerprints: ["pending", "accepted", "recover"])!
+    check(try !store.isCurrent(staleAttempt), "a source revision invalidates an attempt held while another request awaited its response")
+    check(try renamed.id == original.id && renamed.sequence == 3 && renamed.appName == "Exact App Renamed" &&
+          store.duePushes(at: Date(), fingerprints: ["accepted"]).isEmpty,
+          "same-bundle source name enrichment preserves accepted delivery")
+    check(try store.duePushes(at: Date(), fingerprints: ["recover"]).count == 1 &&
+          store.duePushes(at: Date(), fingerprints: ["withheld"]).isEmpty,
+          "confirmed source enrichment rearms only explicitly included suppressed recipients")
+    let revised = try store.ingestBanner(observation(uuid, body: "AX updated body", observedAt: 9_999), fingerprints: ["pending", "accepted"])!
+    check(revised.id == original.id && revised.sequence == 4 && revised.body == "AX updated body" && revised.date == original.date &&
+          revised.appBundleID == renamed.appBundleID && revised.appName == renamed.appName,
+          "later AX text revision retains exact source attribution and original observation time")
+    check(try store.duePushes(at: Date(), fingerprints: ["accepted"]).isEmpty, "source or AX enrichment never rearms an accepted occurrence")
+    let dbSourceID = uuid + ":" + String(TimeInterval(500).bitPattern, radix: 16)
+    let dbEvent = MirroredNotification(id: "notification-store:" + dbSourceID, appBundleID: "test.authoritative-db", appName: "Database App",
+                                       title: "DB title", subtitle: "DB subtitle", body: "Full DB body", date: 500)
+    let authoritative = try store.ingest(snapshot([NotificationStoreRecord(sourceID: dbSourceID, fingerprint: "db-source", event: dbEvent)]), fingerprints: ["pending", "accepted"])
+    check(authoritative.count == 1 && authoritative[0].id == original.id && authoritative[0].sequence == 5 &&
+          authoritative[0].appBundleID == dbEvent.appBundleID && authoritative[0].appName == dbEvent.appName &&
+          authoritative[0].body == dbEvent.body && authoritative[0].date == dbEvent.date,
+          "later DB row authoritatively corrects exact-log attribution and delivery date under the same ID")
+    check(try store.enrichBannerSource(uuid: uuid, bundleID: "test.exact-source", appName: "Exact App", fingerprints: ["pending", "accepted"]) == nil,
+          "a DB-bound occurrence ignores later log source enrichment")
+    check(try store.events(after: 0).first?.appBundleID == dbEvent.appBundleID && store.duePushes(at: Date(), fingerprints: ["accepted"]).isEmpty,
+          "bound DB attribution and accepted state remain authoritative")
+
+    let sourceFirstUUID = String(repeating: "7", count: 32)
+    let unrelatedUUID = String(repeating: "8", count: 32)
+    let sourceFirstURL = location("source-first")
+    var sourceFirst: NotificationHistoryStore? = try NotificationHistoryStore(url: sourceFirstURL)
+    check(try sourceFirst!.enrichBannerSource(uuid: sourceFirstUUID, bundleID: "test.source-first", appName: "Source First", fingerprints: ["device"]) == nil,
+          "source metadata arriving first does not manufacture an empty event")
+    check(try sourceFirst!.events(after: 0).isEmpty && sourceFirst!.duePushes(at: Date(), fingerprints: ["device"]).isEmpty &&
+          count(sourceFirstURL, "SELECT CAST(value AS INTEGER) FROM metadata WHERE key='sequence'") == 0,
+          "source-only metadata creates neither archive, outbox nor sequence")
+    sourceFirst = nil
+    sourceFirst = try NotificationHistoryStore(url: sourceFirstURL)
+    let unrelated = try sourceFirst!.ingestBanner(observation(unrelatedUUID), fingerprints: ["device"])!
+    check(unrelated.appBundleID.isEmpty && unrelated.appName == "Mac", "exact source mapping cannot cross into another UUID")
+    check(try sourceFirst!.duePushes(at: Date(), fingerprints: ["device"]).isEmpty, "unknown AX source never enters an outbox even when recipients are supplied")
+    let mapped = try sourceFirst!.ingestBanner(observation(sourceFirstUUID), fingerprints: ["device"])!
+    check(mapped.sequence == 2 && mapped.appBundleID == "test.source-first" && mapped.appName == "Source First",
+          "source-first mapping survives restart and supplies attribution to the later AX event")
+    check(try sourceFirst!.duePushes(at: Date(), fingerprints: ["device"]).map { $0.event.id } == [mapped.id],
+          "source-first mapped AX event enqueues only its confirmed occurrence")
+    check(try sourceFirst!.enrichBannerSource(uuid: sourceFirstUUID, bundleID: "test.source-first", appName: "Source First", fingerprints: ["device"]) == nil,
+          "reloaded exact source mapping remains idempotent")
+
+    let conflictUUID = String(repeating: "a6", count: 16)
+    let conflictURL = location("conflict")
+    var conflict: NotificationHistoryStore? = try NotificationHistoryStore(url: conflictURL)
+    _ = try conflict!.ingest(snapshot([]), fingerprints: [])
+    let provisional = try conflict!.ingestBanner(observation(conflictUUID), fingerprints: ["existing"])!
+    _ = try conflict!.enrichBannerSource(uuid: conflictUUID, bundleID: "test.first-source", appName: "First App", fingerprints: ["existing"])
+    try conflict!.finish(try conflict!.duePushes(at: Date(), fingerprints: ["existing"])[0], state: "accepted")
+    let withdrawn = try conflict!.enrichBannerSource(uuid: conflictUUID, bundleID: "test.conflicting-source", appName: "Conflicting App", fingerprints: ["new"])!
+    check(withdrawn.id == provisional.id && withdrawn.sequence == 3 && withdrawn.appBundleID.isEmpty && withdrawn.appName == "Mac" &&
+          withdrawn.body == provisional.body && withdrawn.date == provisional.date,
+          "conflicting log bundle IDs withdraw AX-only attribution without guessing or changing its content")
+    check(try conflict!.duePushes(at: Date(), fingerprints: ["new"]).isEmpty, "source conflict never enqueues the unknown occurrence for new recipients")
+    let conflictRevision = try conflict!.ingestBanner(observation(conflictUUID, body: "Changed while source is conflicted"), fingerprints: ["new"])!
+    check(try conflictRevision.sequence == 4 && conflictRevision.appBundleID.isEmpty && conflictRevision.appName == "Mac" &&
+          conflict!.duePushes(at: Date(), fingerprints: ["new"]).isEmpty,
+          "later AX revisions remain unknown and do not alert new recipients after source conflict")
+    conflict = nil
+    conflict = try NotificationHistoryStore(url: conflictURL)
+    check(try conflict!.enrichBannerSource(uuid: conflictUUID, bundleID: "test.first-source", appName: "First App", fingerprints: ["new"]) == nil &&
+          count(conflictURL, "SELECT CAST(value AS INTEGER) FROM metadata WHERE key='sequence'") == 4,
+          "source conflict persists across restart and cannot be repaired by another log line")
+    let recoveredSourceID = conflictUUID + ":" + String(TimeInterval(600).bitPattern, radix: 16)
+    let recoveredEvent = MirroredNotification(id: "notification-store:" + recoveredSourceID, appBundleID: "test.confirmed-database",
+                                              appName: "Confirmed Database App", title: "DB title", body: "DB body", date: 600)
+    let recoveredDB = try conflict!.ingest(snapshot([NotificationStoreRecord(sourceID: recoveredSourceID, fingerprint: "confirmed-db", event: recoveredEvent)]), fingerprints: ["existing", "new"])
+    check(recoveredDB.count == 1 && recoveredDB[0].id == provisional.id && recoveredDB[0].sequence == 5 &&
+          recoveredDB[0].appBundleID == recoveredEvent.appBundleID && recoveredDB[0].date == recoveredEvent.date,
+          "authoritative DB observation can resolve a conflicted AX occurrence under its original ID")
+    check(try conflict!.duePushes(at: Date(), fingerprints: ["existing"]).isEmpty &&
+          conflict!.duePushes(at: Date(), fingerprints: ["new"]).map { $0.event.id } == [provisional.id],
+          "DB resolution preserves accepted delivery and enqueues the newly confirmed recipient once")
+    check(try conflict!.enrichBannerSource(uuid: conflictUUID, bundleID: "test.another-source", appName: "Another App", fingerprints: ["new"]) == nil &&
+          conflict!.events(after: 0).first?.appBundleID == recoveredEvent.appBundleID,
+          "later conflicting logs cannot replace a DB-bound attribution")
+
+    // Fail before the archive write and late in outbox creation. Both failures must roll back
+    // the exact-source mapping as well as archive/outbox state and the replay sequence.
+    for failure in ["archive", "outbox"] {
+        let rollbackURL = location("rollback-" + failure)
+        let rollback = try NotificationHistoryStore(url: rollbackURL)
+        let rollbackUUID = String(repeating: "9", count: 32)
+        let early = try rollback.ingestBanner(observation(rollbackUUID), fingerprints: [])!
+        let trigger = failure == "archive"
+            ? "CREATE TRIGGER fail_source_enrichment BEFORE INSERT ON archive BEGIN SELECT RAISE(ABORT,'fixture'); END"
+            : "CREATE TRIGGER fail_source_enrichment BEFORE INSERT ON push_outbox WHEN NEW.fingerprint='fail' BEGIN SELECT RAISE(ABORT,'fixture'); END"
+        sql(rollbackURL, trigger)
+        do {
+            _ = try rollback.enrichBannerSource(uuid: rollbackUUID, bundleID: "test.rollback-source", appName: "Rollback App", fingerprints: ["good", "fail"])
+            fatalError("source enrichment transaction must fail")
+        } catch {}
+        let unchanged = try rollback.events(after: 0)
+        check(unchanged.count == 1 && unchanged[0] == early && count(rollbackURL, "SELECT count(*) FROM push_outbox") == 0 &&
+              count(rollbackURL, "SELECT CAST(value AS INTEGER) FROM metadata WHERE key='sequence'") == 1,
+              "failed source enrichment preserves archive/outbox and consumes no sequence (\(failure))")
+        sql(rollbackURL, "DROP TRIGGER fail_source_enrichment")
+        let afterFailure = try rollback.ingestBanner(observation(rollbackUUID, body: "AX after failed source write"), fingerprints: [])!
+        check(afterFailure.sequence == 2 && afterFailure.appBundleID.isEmpty && afterFailure.appName == "Mac",
+              "failed source mapping does not leak into a later AX revision (\(failure))")
+        let recovered = try rollback.enrichBannerSource(uuid: rollbackUUID, bundleID: "test.rollback-source", appName: "Rollback App", fingerprints: ["good"])!
+        check(try recovered.id == early.id && recovered.sequence == 3 && recovered.appBundleID == "test.rollback-source" &&
+              rollback.duePushes(at: Date(), fingerprints: ["good"]).count == 1,
+              "source enrichment retries as one committed occurrence after rollback (\(failure))")
+    }
+}
+
 func checkBannerHistory(root: URL) throws {
     func banner(_ uuid: String, body: String = "Banner body", name: String? = "Banner App") -> NotificationBannerObservation {
         NotificationBannerObservation(sourceUUID: uuid, title: "Banner title", subtitle: "Banner subtitle",
@@ -60,12 +207,14 @@ func checkBannerHistory(root: URL) throws {
     check(try merged!.ingestBanner(banner(uuid), fingerprints: ["device"]) == nil, "identical unbound AX observation is idempotent")
     let changed = try merged!.ingestBanner(banner(uuid, body: "Revised banner"), fingerprints: ["device"])!
     check(changed.id == first.id && changed.sequence == 2 && changed.body == "Revised banner", "unbound AX content revision advances the same occurrence")
+    check(try merged!.duePushes(at: Date(), fingerprints: ["device"]).isEmpty, "unknown AX revisions never enqueue recipient alerts")
+    _ = try merged!.enrichBannerSource(uuid: uuid, bundleID: "test.banner-source", appName: "Exact Banner App", fingerprints: ["device"])
     let accepted = try merged!.duePushes(at: Date(), fingerprints: ["device"])
-    check(accepted.count == 1, "AX revisions have one per-device outbox occurrence")
+    check(accepted.count == 1, "confirmed AX source creates one per-device outbox occurrence")
     try merged!.finish(accepted[0], state: "accepted")
     let full = dbRecord(uuid)
     let enriched = try merged!.ingest(snapshot([full]), fingerprints: ["device"])
-    check(enriched.count == 1 && enriched[0].id == first.id && enriched[0].sequence == 3,
+    check(enriched.count == 1 && enriched[0].id == first.id && enriched[0].sequence == 4,
           "AX to DB enrichment preserves occurrence ID and advances replay sequence")
     check(enriched[0].appBundleID == full.event.appBundleID && enriched[0].appName == full.event.appName &&
           enriched[0].title == full.event.title && enriched[0].subtitle == full.event.subtitle &&
@@ -113,6 +262,7 @@ func checkBannerHistory(root: URL) throws {
     let baselineUUID = String(repeating: "d", count: 32)
     let oldUUID = String(repeating: "e", count: 32)
     let early = try baselineStore.ingestBanner(banner(baselineUUID), fingerprints: ["device"])!
+    _ = try baselineStore.enrichBannerSource(uuid: baselineUUID, bundleID: "test.baseline-source", appName: "Baseline Source App", fingerprints: ["device"])
     try baselineStore.finish(try baselineStore.duePushes(at: Date(), fingerprints: ["device"])[0], state: "accepted")
     let baselineMatch = dbRecord(baselineUUID)
     let unrelated = dbRecord(oldUUID)
@@ -123,11 +273,11 @@ func checkBannerHistory(root: URL) throws {
     } catch {}
     check(count(baselineURL, "SELECT count(*) FROM metadata WHERE key='baseline'") == 0, "failed baseline claim does not establish baseline")
     check(count(baselineURL, "SELECT count(*) FROM source_seen") == 0, "failed baseline claim rolls back other source observations")
-    check(try baselineStore.events(after: 0).first?.sequence == 1 && count(baselineURL, "SELECT CAST(value AS INTEGER) FROM metadata WHERE key='sequence'") == 1,
+    check(try baselineStore.events(after: 0).first?.sequence == 2 && count(baselineURL, "SELECT CAST(value AS INTEGER) FROM metadata WHERE key='sequence'") == 2,
           "failed DB enrichment preserves the AX event without consuming a sequence")
     sql(baselineURL, "DROP TRIGGER fail_banner_claim")
     let baselineEnriched = try baselineStore.ingest(snapshot([unrelated, baselineMatch]), fingerprints: ["device"])
-    check(baselineEnriched.count == 1 && baselineEnriched[0].id == early.id && baselineEnriched[0].sequence == 2,
+    check(baselineEnriched.count == 1 && baselineEnriched[0].id == early.id && baselineEnriched[0].sequence == 3,
           "first successful DB baseline enriches only an existing AX occurrence")
     check(try baselineStore.events(after: 0).count == 1, "unrelated old DB baseline rows do not become archived alerts")
     check(try baselineStore.ingestBanner(banner(oldUUID), fingerprints: []) == nil, "baseline DB row suppresses a later historical AX observation")
@@ -181,7 +331,7 @@ func checkBannerHistory(root: URL) throws {
     let recovered = try rollbackStore.ingestBanner(banner(rollbackUUID), fingerprints: ["device"])!
     check(recovered.sequence == 1 && recovered.id == "notification-ax:" + rollbackUUID,
           "failed AX transaction neither consumes a sequence nor leaves a dedup alias")
-    check(try rollbackStore.duePushes(at: Date(), fingerprints: ["device"]).count == 1, "retried AX transaction creates exactly one outbox item")
+    check(try rollbackStore.duePushes(at: Date(), fingerprints: ["device"]).isEmpty, "retried unknown AX transaction still creates no outbox item")
 }
 
 @MainActor
@@ -334,6 +484,7 @@ for (status, reason) in [(400, "DeviceTokenNotForTopic"), (403, "InvalidProvider
     if case .permanentFailure = APNsProvider.classify(statusCode: status, reason: reason) {} else { fatalError("APNs permanent classification") }
 }
 try checkBannerHistory(root: root)
+try checkBannerSourceHistory(root: root)
 Task { @MainActor in
     do {
         let suite = "sill.notification-history-check." + UUID().uuidString
@@ -359,7 +510,7 @@ Task { @MainActor in
         check(try reloaded.replay(after: 0).map(\.id) == ["first-live", "second-live"], "stop/restart retains recoverable history")
         reloaded.stop()
         try await checkMirrorBannerRetry(root: root)
-        print("notification-history: atomic baseline/archive, AX/DB alias merge, mirror write retry/source-gated outbox, reload/idempotence, UUID reuse/ambiguity, revisions, ordered replay, durable outbox, disabled privacy/resume and APNs classification passed (offline)")
+        print("notification-history: atomic baseline/archive, AX/DB alias merge, exact source attribution, mirror write retry/source-gated outbox, reload/idempotence, UUID reuse/ambiguity, revisions, ordered replay, durable outbox, disabled privacy/resume and APNs classification passed (offline)")
         try? FileManager.default.removeItem(at: root)
         exit(0)
     } catch {

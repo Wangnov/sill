@@ -59,6 +59,7 @@ final class NotificationHistoryStore {
                 CREATE TABLE IF NOT EXISTS source_seen (source_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, event_id TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS archive (event_id TEXT PRIMARY KEY, sequence INTEGER NOT NULL UNIQUE, event BLOB NOT NULL);
                 CREATE TABLE IF NOT EXISTS notification_alias (uuid TEXT PRIMARY KEY, event_id TEXT NOT NULL, source_id TEXT);
+                CREATE TABLE IF NOT EXISTS notification_source (uuid TEXT PRIMARY KEY, bundle_id TEXT, app_name TEXT);
                 CREATE TABLE IF NOT EXISTS push_outbox (
                     fingerprint TEXT NOT NULL, event_id TEXT NOT NULL, sequence INTEGER NOT NULL,
                     state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, next_attempt REAL NOT NULL DEFAULT 0,
@@ -125,39 +126,77 @@ final class NotificationHistoryStore {
         }
     }
 
-    /// AX supplies an exact system UUID but no delivery timestamp or authoritative bundle ID.
-    /// Keep it provisional until the database identifies one matching delivery occurrence.
+    /// AX supplies an exact system UUID but no delivery timestamp. An exact source observation
+    /// may already identify its app; the database still owns the eventual delivery occurrence.
     func ingestBanner(_ observation: NotificationBannerObservation, fingerprints: [String]) throws -> MirroredNotification? {
         try transaction {
             let uuid = observation.sourceUUID
             let alias = try notificationAlias(uuid: uuid)
             if alias?.sourceID != nil { return nil } // Bound database metadata is authoritative.
-            let appName = observation.displayAppName.flatMap { $0.isEmpty ? nil : $0 } ?? "Mac"
+            let source = try bannerSource(uuid: uuid)
+            let bundleID = source?.bundleID ?? ""
+            let appName = source?.appName ?? observation.displayAppName.flatMap { $0.isEmpty ? nil : $0 } ?? "Mac"
             let subtitle = observation.subtitle.isEmpty ? nil : observation.subtitle
             if let alias {
                 guard var existing = try archivedEvent(id: alias.eventID) else { throw StoreError.invalidEvent }
+                let attributedName = existing.appBundleID.isEmpty ? appName : existing.appName
                 guard existing.title != observation.title || existing.subtitle != subtitle ||
-                        existing.body != observation.body || existing.appName != appName else { return nil }
+                        existing.body != observation.body || existing.appName != attributedName else { return nil }
                 // AX may initially expose only part of a tree. Fill changed fields under the
                 // same ID; repeated callbacks with identical content consume no new sequence.
                 existing.title = observation.title
                 existing.subtitle = subtitle
                 existing.body = observation.body
-                existing.appName = appName
-                return try archive(existing, fingerprints: fingerprints)
+                existing.appName = attributedName
+                return try archive(existing, fingerprints: existing.appBundleID.isEmpty ? [] : fingerprints)
             }
             // Older Sill databases predate aliases. Do not replay an old visible banner merely
             // because its exact UUID has not yet been backfilled into the additive alias table.
             if try scalarText("SELECT event_id FROM source_seen WHERE source_id GLOB ? LIMIT 1", [.text(uuid + ":*")]) != nil {
                 return nil
             }
-            let event = MirroredNotification(id: "notification-ax:" + uuid, appBundleID: "", appName: appName,
+            let event = MirroredNotification(id: "notification-ax:" + uuid, appBundleID: bundleID, appName: appName,
                                              title: observation.title, subtitle: subtitle, body: observation.body,
                                              date: observation.observedAt)
-            let archived = try archive(event, fingerprints: fingerprints)
+            let archived = try archive(event, fingerprints: bundleID.isEmpty ? [] : fingerprints)
             try execute("INSERT INTO notification_alias(uuid,event_id,source_id) VALUES(?,?,NULL)",
                         [.text(uuid), .text(event.id)])
             return archived
+        }
+    }
+
+    /// A source observation contains no message body. Save its exact UUID mapping even when AX
+    /// has not arrived, but only enrich an existing banner event. Never bind source_id here:
+    /// a later database record remains authoritative for source, content and delivery time.
+    func enrichBannerSource(uuid: String, bundleID: String, appName: String,
+                            fingerprints: [String]) throws -> MirroredNotification? {
+        guard !bundleID.isEmpty else { return nil }
+        return try transaction {
+            let previous = try bannerSource(uuid: uuid)
+            let conflicted = previous != nil && (previous?.bundleID == nil || previous?.bundleID != bundleID)
+            let name = appName.isEmpty ? bundleID : appName
+            if conflicted {
+                // NULL marks a durable conflict, not a missing observation. Do not choose one
+                // of two bundles for the same UUID or trust a later repetition of either log.
+                try execute("UPDATE notification_source SET bundle_id=NULL,app_name=NULL WHERE uuid=?", [.text(uuid)])
+            } else {
+                try execute("""
+                    INSERT INTO notification_source(uuid,bundle_id,app_name) VALUES(?,?,?)
+                    ON CONFLICT(uuid) DO UPDATE SET app_name=excluded.app_name
+                    """, [.text(uuid), .text(bundleID), .text(name)])
+            }
+            guard let alias = try notificationAlias(uuid: uuid), alias.sourceID == nil,
+                  var existing = try archivedEvent(id: alias.eventID) else { return nil }
+            if conflicted {
+                guard !existing.appBundleID.isEmpty else { return nil }
+                existing.appBundleID = ""
+                existing.appName = "Mac"
+                return try archive(existing, fingerprints: [])
+            }
+            guard existing.appBundleID != bundleID || existing.appName != name else { return nil }
+            existing.appBundleID = bundleID
+            existing.appName = name
+            return try archive(existing, fingerprints: fingerprints)
         }
     }
 
@@ -198,6 +237,17 @@ final class NotificationHistoryStore {
         return attempts
     }
 
+    /// Sending an earlier batch item awaits the network. A later item's source may have been
+    /// corrected meanwhile, so validate its archive/outbox revision again before using it.
+    func isCurrent(_ attempt: PushAttempt, at now: Date = Date()) throws -> Bool {
+        try scalarText("""
+            SELECT p.event_id FROM push_outbox p JOIN archive a ON a.event_id=p.event_id
+            WHERE p.fingerprint=? AND p.event_id=? AND p.sequence=? AND a.sequence=p.sequence
+            AND p.state IN ('pending','retry') AND p.next_attempt<=?
+            """, [.text(attempt.fingerprint), .text(attempt.event.id),
+                  .integer(attempt.event.sequence ?? 0), .real(now.timeIntervalSince1970)]) != nil
+    }
+
     /// Acceptance belongs to one delivery occurrence, including a request for its older body.
     /// A late failed request cannot change the retry state of a newer body revision.
     func finish(_ attempt: PushAttempt, state: String, nextAttempt: Date? = nil, problem: String? = nil) throws {
@@ -235,6 +285,12 @@ final class NotificationHistoryStore {
         try execute("UPDATE push_outbox SET sequence=? WHERE event_id=?",
                     [.integer(sequence), .text(event.id)])
         for fingerprint in Set(fingerprints) {
+            // Explicit recipients can resume a source-suppressed occurrence after exact/DB
+            // attribution repairs it. Acceptance and provider/token failures remain untouched.
+            try execute("""
+                UPDATE push_outbox SET state='pending',attempts=0,next_attempt=0,problem=NULL
+                WHERE fingerprint=? AND event_id=? AND state='suppressed'
+                """, [.text(fingerprint), .text(event.id)])
             try execute("""
                 INSERT INTO push_outbox(fingerprint,event_id,sequence,state) VALUES(?,?,?,'pending')
                 ON CONFLICT(fingerprint,event_id) DO UPDATE SET sequence=excluded.sequence
@@ -253,6 +309,19 @@ final class NotificationHistoryStore {
     private struct NotificationAlias {
         let eventID: String
         let sourceID: String?
+    }
+
+    private struct BannerSource {
+        let bundleID: String?
+        let appName: String?
+    }
+
+    private func bannerSource(uuid: String) throws -> BannerSource? {
+        let statement = try prepare("SELECT bundle_id,app_name FROM notification_source WHERE uuid=?", [.text(uuid)])
+        defer { sqlite3_finalize(statement) }
+        guard try step(statement) else { return nil }
+        return BannerSource(bundleID: sqlite3_column_type(statement, 0) == SQLITE_NULL ? nil : text(statement, 0),
+                            appName: sqlite3_column_type(statement, 1) == SQLITE_NULL ? nil : text(statement, 1))
     }
 
     private func notificationAlias(uuid: String) throws -> NotificationAlias? {

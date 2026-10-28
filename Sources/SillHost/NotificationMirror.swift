@@ -41,6 +41,7 @@ package final class NotificationMirror {
     @ObservationIgnored private var deliveryTask: Task<Void, Never>?
     @ObservationIgnored private var deliveryGeneration = 0
     @ObservationIgnored private var pendingBanners: [String: NotificationBannerObservation] = [:]
+    @ObservationIgnored private var pendingSources: [String: (source: NotificationSourceAttribution, appName: String)] = [:]
     @ObservationIgnored private var bannerRetry: Task<Void, Never>?
 
     private enum Key {
@@ -82,6 +83,7 @@ package final class NotificationMirror {
         self.onHistoryAvailable = onHistoryAvailable
         collector.onSnapshot = { [weak self] in self?.receiveSnapshot($0) }
         collector.onBanner = { [weak self] in self?.receiveBanner($0) }
+        collector.onSource = { [weak self] in self?.receiveSource($0, appName: $1) }
         collector.onStatus = { [weak self] in self?.collectorStatus = $0 }
         pruneUnpairedRegistrations()
         apply()
@@ -222,11 +224,19 @@ package final class NotificationMirror {
     private func receiveSnapshot(_ snapshot: NotificationStoreSnapshot) {
         guard enabled, !macID.isEmpty else { return }
         do {
+            // Own-client notifications must not push back to that client. Still identify an AX
+            // copy already captured before the database appeared, instead of leaving it unknown.
+            var changed = false
+            for record in snapshot.records where isMirrorSource(record.event.appBundleID) {
+                guard let uuid = NotificationBannerParser.normalizedUUID(String(record.sourceID.prefix(32))) else { continue }
+                if try historyStore().enrichBannerSource(uuid: uuid, bundleID: record.event.appBundleID,
+                        appName: record.event.appName, fingerprints: []) != nil { changed = true }
+            }
             let filtered = NotificationStoreSnapshot(records: snapshot.records.filter {
                 !isMirrorSource($0.event.appBundleID)
             }, skippedRecordCount: snapshot.skippedRecordCount)
             let events = try historyStore().ingest(filtered, fingerprints: pushRecipients())
-            if !events.isEmpty { onHistoryAvailable?() }
+            if changed || !events.isEmpty { onHistoryAvailable?() }
             deliverPending()
         } catch { historyFailure(error) }
     }
@@ -241,15 +251,29 @@ package final class NotificationMirror {
         flushPendingBanners()
     }
 
+    private func receiveSource(_ source: NotificationSourceAttribution, appName: String) {
+        guard enabled, !macID.isEmpty else { return }
+        pendingSources[source.uuid] = (source, appName)
+        flushPendingBanners()
+    }
+
     private func flushPendingBanners() {
-        guard enabled, !macID.isEmpty, !pendingBanners.isEmpty else { return }
+        guard enabled, !macID.isEmpty, !pendingBanners.isEmpty || !pendingSources.isEmpty else { return }
         var changed = false
         do {
+            // usernoted's removal metadata can name a replaced banner that never reached the
+            // retained database. This exact UUID join revises its existing event; it never
+            // creates notification text from a log line. Keep failed writes for the same retry.
+            for (uuid, entry) in Array(pendingSources) {
+                let recipients = isMirrorSource(entry.source.bundleID) ? [] : pushRecipients()
+                if try historyStore().enrichBannerSource(uuid: uuid, bundleID: entry.source.bundleID,
+                        appName: entry.appName, fingerprints: recipients) != nil { changed = true }
+                pendingSources.removeValue(forKey: uuid)
+            }
             for banner in Array(pendingBanners.values) {
-                // AX does not identify the posting app. Keep it immediately in the TLS inbox,
-                // but wait for database source attribution before creating a background push:
-                // otherwise an iPhone-mirrored Sill alert could produce another Sill alert.
-                if try historyStore().ingestBanner(banner, fingerprints: []) != nil { changed = true }
+                // The store queues only attributed sources. The send-time check below also
+                // suppresses Sill itself, including source metadata received before its banner.
+                if try historyStore().ingestBanner(banner, fingerprints: pushRecipients()) != nil { changed = true }
                 pendingBanners.removeValue(forKey: banner.sourceUUID)
             }
         } catch {
@@ -264,6 +288,7 @@ package final class NotificationMirror {
             }
         }
         if changed { onHistoryAvailable?() }
+        deliverPending()
     }
 
     private func isMirrorSource(_ bundleID: String) -> Bool {
@@ -306,6 +331,7 @@ package final class NotificationMirror {
                         let key = attempt.fingerprint
                         guard let sending = self.registrations[key], self.isPaired?(sending.fingerprint) == true,
                               sending.topic == self.apns.topic, sending.environment == self.apns.environment else { continue }
+                        guard try self.historyStore().isCurrent(attempt) else { continue }
                         let explicitTest = attempt.event.id.hasPrefix("sill-test:")
                             && attempt.event.appBundleID == (Bundle.main.bundleIdentifier ?? "me.saffer.sill.mac")
                         guard explicitTest || (!attempt.event.appBundleID.isEmpty && !self.isMirrorSource(attempt.event.appBundleID)) else {
