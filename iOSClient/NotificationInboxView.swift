@@ -2,15 +2,26 @@ import SwiftUI
 import UIKit
 import UserNotifications
 
+private struct PresentNotificationInboxKey: EnvironmentKey {
+    static let defaultValue: () -> Void = {}
+}
+
+extension EnvironmentValues {
+    /// The containing window owns the sheet, even when a button's screen or panel goes away.
+    var presentNotificationInbox: () -> Void {
+        get { self[PresentNotificationInboxKey.self] }
+        set { self[PresentNotificationInboxKey.self] = newValue }
+    }
+}
+
 /// A small entry point usable on the connect screen and inside the streaming Settings panel.
 /// Presentation belongs to this window; the history and permission preference belong to the App.
 struct NotificationInboxButton: View {
     @ObservedObject var inbox: NotificationInbox
-    @Environment(\.scenePhase) private var scenePhase
-    @State private var presented = false
+    @Environment(\.presentNotificationInbox) private var presentInbox
 
     var body: some View {
-        Button { presented = true } label: {
+        Button(action: presentInbox) {
             HStack(spacing: 8) {
                 Label("Notifications", systemImage: "bell")
                 if inbox.unreadCount > 0 {
@@ -27,18 +38,6 @@ struct NotificationInboxButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityHint("Open notifications mirrored from your paired Macs.")
-        .sheet(isPresented: $presented) {
-            NotificationInboxView(inbox: inbox)
-                .presentationDetents([.medium, .large])
-        }
-        .onAppear { openRequestedInbox() }
-        .onChange(of: inbox.presentationRequest) { _, _ in openRequestedInbox() }
-        .onChange(of: scenePhase) { _, _ in openRequestedInbox() }
-    }
-
-    private func openRequestedInbox() {
-        guard scenePhase == .active, inbox.consumePresentationRequest() else { return }
-        presented = true
     }
 }
 

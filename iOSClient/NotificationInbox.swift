@@ -49,7 +49,7 @@ final class NotificationInbox: NSObject, ObservableObject, UNUserNotificationCen
     @Published private(set) var registrationProblem: String?
     @Published private(set) var persistenceProblem: String?
     @Published private(set) var icons: [String: UIImage] = [:]
-    /// Consumed by one foreground window's inbox button after a system notification was tapped.
+    /// Consumed by one foreground window's root after a system notification was tapped.
     @Published private(set) var presentationRequest: UUID?
 
     private static let enabledKey = "Sill.mirrorNotifications"

@@ -10,18 +10,35 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var notificationInbox: NotificationInbox
     @SceneStorage("Sill.resumeSceneID") private var resumeSceneID = UUID().uuidString
+    @State private var notificationInboxPresented = false
 
     init(savedMacStore: SavedMacStore) {
         _client = StateObject(wrappedValue: StreamClient(savedMacStore: savedMacStore))
     }
 
     var body: some View {
-        root.onAppear {
+        root
+        // Keep the presenter across reconnects and outside the stream's optional Settings panel.
+        .environment(\.presentNotificationInbox, { notificationInboxPresented = true })
+        .sheet(isPresented: $notificationInboxPresented) {
+            NotificationInboxView(inbox: notificationInbox)
+                .presentationDetents([.medium, .large])
+        }
+        .onAppear {
             statsReporter.attach(to: client)
             client.attachNotificationInbox(notificationInbox)
             updateSceneSession()
         }
-        .onChange(of: scenePhase, initial: true) { _, _ in updateSceneSession() }
+        .onChange(of: scenePhase, initial: true) { _, _ in
+            updateSceneSession()
+            openRequestedInbox()
+        }
+        .onChange(of: notificationInbox.presentationRequest) { _, _ in openRequestedInbox() }
+    }
+
+    private func openRequestedInbox() {
+        guard scenePhase == .active, notificationInbox.consumePresentationRequest() else { return }
+        notificationInboxPresented = true
     }
 
     private func updateSceneSession() {
