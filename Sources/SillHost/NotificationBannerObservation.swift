@@ -9,6 +9,8 @@ struct NotificationBannerObservation: Sendable, Equatable {
     let body: String
     let observedAt: TimeInterval
     let displayAppName: String?
+    /// A system-owned group description identified an iPhone notification, never message text.
+    var isFromIPhone: Bool = false
 }
 
 /// Arrival uses a short-lived unique prefix/time match; exact uses a full UUID or the database.
@@ -38,6 +40,71 @@ struct NotificationArrivalObservation: Equatable, Sendable {
 
 /// Pure parsing shared by the live banner adapter and offline fixtures.
 enum NotificationBannerParser {
+    private static let iPhoneDescriptionKeys = [
+        "%@, %@, from iPhone", "%@, %@, stacked, from iPhone",
+        "Summary: %@, from iPhone", "Stacked summary: %@, from iPhone",
+    ]
+    private static let formatSlot = try! NSRegularExpression(pattern: #"%(?:([1-9][0-9]*)\$)?@"#)
+    private static let iPhoneDescriptionTemplates: [String] = {
+        guard let bundle = Bundle(path: "/System/Library/CoreServices/NotificationCenter.app") else { return [] }
+        var templates = Set(iPhoneDescriptionKeys.map {
+            bundle.localizedString(forKey: $0, value: nil, table: "Localizable")
+        })
+        // NotificationCenter can use a different app language from Sill. Read only these four
+        // known keys in its system resources rather than invent translations or guess its locale.
+        if let url = bundle.url(forResource: "Localizable", withExtension: "loctable"),
+           let data = try? Data(contentsOf: url),
+           let table = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] {
+            for case let localized as [String: Any] in table.values {
+                for key in iPhoneDescriptionKeys {
+                    if let value = localized[key] as? String { templates.insert(value) }
+                }
+            }
+        }
+        return Array(templates)
+    }()
+
+    /// Pass only the notification UUID group's own system description/label. This description
+    /// includes message text, so the entire separately parsed body must occupy the final content
+    /// slot: the system's origin marker must follow the body, never be part of it. Empty bodies
+    /// and reordered content slots remain unclassified until their AX shapes are established.
+    static func isFromIPhone(groupMetadata: [String], body: String, templates: [String]? = nil) -> Bool {
+        guard !body.isEmpty else { return false }
+        for template in templates ?? iPhoneDescriptionTemplates {
+            let text = template as NSString
+            let slots = formatSlot.matches(in: template, range: NSRange(location: 0, length: text.length))
+            guard (1...2).contains(slots.count), let last = slots.last,
+                  slots.enumerated().allSatisfy({ index, slot in
+                      slot.range(at: 1).location == NSNotFound ||
+                          Int(text.substring(with: slot.range(at: 1))) == index + 1
+                  }) else { continue }
+            let suffix = text.substring(from: NSMaxRange(last.range))
+            // This also avoids compiling a body-specific regex for unrelated system locales.
+            let candidates = groupMetadata.filter { !$0.isEmpty && $0.hasSuffix(body + suffix) }
+            guard !suffix.isEmpty, !candidates.isEmpty,
+                  let pattern = descriptionPattern(template, slots: slots, body: body) else { continue }
+            if candidates.contains(where: {
+                pattern.firstMatch(in: $0, range: NSRange($0.startIndex..<$0.endIndex, in: $0)) != nil
+            }) { return true }
+        }
+        return false
+    }
+
+    private static func descriptionPattern(_ template: String, slots: [NSTextCheckingResult],
+                                           body: String) -> NSRegularExpression? {
+        let text = template as NSString
+        var pattern = #"\A"#
+        var cursor = 0
+        for (index, slot) in slots.enumerated() {
+            pattern += NSRegularExpression.escapedPattern(for:
+                text.substring(with: NSRange(location: cursor, length: slot.range.location - cursor)))
+            pattern += index == slots.count - 1 ? NSRegularExpression.escapedPattern(for: body) : #"[\s\S]*?"#
+            cursor = NSMaxRange(slot.range)
+        }
+        pattern += NSRegularExpression.escapedPattern(for: text.substring(from: cursor)) + #"\z"#
+        return try? NSRegularExpression(pattern: pattern)
+    }
+
     struct Line: Sendable, Equatable {
         let identifier: String?
         let value: String

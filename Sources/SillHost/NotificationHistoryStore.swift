@@ -61,6 +61,7 @@ final class NotificationHistoryStore {
                 CREATE TABLE IF NOT EXISTS notification_alias (uuid TEXT PRIMARY KEY, event_id TEXT NOT NULL, source_id TEXT);
                 CREATE TABLE IF NOT EXISTS notification_source (uuid TEXT PRIMARY KEY, bundle_id TEXT, app_name TEXT,
                     evidence TEXT NOT NULL DEFAULT 'exact');
+                CREATE TABLE IF NOT EXISTS notification_excluded (uuid TEXT PRIMARY KEY);
                 CREATE TABLE IF NOT EXISTS push_outbox (
                     fingerprint TEXT NOT NULL, event_id TEXT NOT NULL, sequence INTEGER NOT NULL,
                     state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, next_attempt REAL NOT NULL DEFAULT 0,
@@ -122,7 +123,7 @@ final class NotificationHistoryStore {
                 if !baseline || claimsBanner {
                     var event = record.event
                     event.id = eventID
-                    added.append(try archive(event, fingerprints: fingerprints))
+                    added.append(try archive(event, fingerprints: fingerprints, sourceUUID: uuid))
                 }
                 try execute("INSERT OR REPLACE INTO source_seen(source_id,fingerprint,event_id) VALUES(?,?,?)",
                             [.text(record.sourceID), .text(record.fingerprint), .text(eventID)])
@@ -137,6 +138,7 @@ final class NotificationHistoryStore {
     func ingestBanner(_ observation: NotificationBannerObservation, fingerprints: [String]) throws -> MirroredNotification? {
         try transaction {
             let uuid = observation.sourceUUID
+            if observation.isFromIPhone { try exclude(uuid: uuid) }
             let alias = try notificationAlias(uuid: uuid)
             if alias?.sourceID != nil { return nil } // Bound database metadata is authoritative.
             let source = try bannerSource(uuid: uuid)
@@ -154,7 +156,7 @@ final class NotificationHistoryStore {
                 existing.subtitle = subtitle
                 existing.body = observation.body
                 existing.appName = attributedName
-                return try archive(existing, fingerprints: existing.appBundleID.isEmpty ? [] : fingerprints)
+                return try archive(existing, fingerprints: existing.appBundleID.isEmpty ? [] : fingerprints, sourceUUID: uuid)
             }
             // Older Sill databases predate aliases. Do not replay an old visible banner merely
             // because its exact UUID has not yet been backfilled into the additive alias table.
@@ -164,7 +166,7 @@ final class NotificationHistoryStore {
             let event = MirroredNotification(id: "notification-ax:" + uuid, appBundleID: bundleID, appName: appName,
                                              title: observation.title, subtitle: subtitle, body: observation.body,
                                              date: observation.observedAt)
-            let archived = try archive(event, fingerprints: bundleID.isEmpty ? [] : fingerprints)
+            let archived = try archive(event, fingerprints: bundleID.isEmpty ? [] : fingerprints, sourceUUID: uuid)
             try execute("INSERT INTO notification_alias(uuid,event_id,source_id) VALUES(?,?,NULL)",
                         [.text(uuid), .text(event.id)])
             return archived
@@ -220,12 +222,12 @@ final class NotificationHistoryStore {
                 guard !existing.appBundleID.isEmpty else { return nil }
                 existing.appBundleID = ""
                 existing.appName = "Mac"
-                return try archive(existing, fingerprints: [])
+                return try archive(existing, fingerprints: [], sourceUUID: uuid)
             }
             guard existing.appBundleID != next.bundleID || existing.appName != next.appName else { return nil }
             existing.appBundleID = next.bundleID ?? ""
             existing.appName = next.appName ?? "Mac"
-            return try archive(existing, fingerprints: fingerprints)
+            return try archive(existing, fingerprints: fingerprints, sourceUUID: uuid)
         }
     }
 
@@ -246,6 +248,16 @@ final class NotificationHistoryStore {
         var events: [MirroredNotification] = []
         while try step(statement) { events.append(try event(at: statement, column: 0)) }
         return events
+    }
+
+    /// Origin stays host-only. Aliases and source_seen also cover events archived before the
+    /// iPhone-origin observation, including older databases which predate the alias table.
+    func isExcluded(_ event: MirroredNotification) throws -> Bool {
+        try scalarText("""
+            SELECT uuid FROM notification_excluded WHERE uuid IN (
+                SELECT uuid FROM notification_alias WHERE event_id=? UNION
+                SELECT substr(source_id,1,32) FROM source_seen WHERE event_id=?) LIMIT 1
+            """, [.text(event.id), .text(event.id)]) != nil
     }
 
     func duePushes(at now: Date, fingerprints: [String], limit: Int = 50) throws -> [PushAttempt] {
@@ -269,7 +281,8 @@ final class NotificationHistoryStore {
     /// Sending an earlier batch item awaits the network. A later item's source may have been
     /// corrected meanwhile, so validate its archive/outbox revision again before using it.
     func isCurrent(_ attempt: PushAttempt, at now: Date = Date()) throws -> Bool {
-        try scalarText("""
+        guard try !isExcluded(attempt.event) else { return false }
+        return try scalarText("""
             SELECT p.event_id FROM push_outbox p JOIN archive a ON a.event_id=p.event_id
             WHERE p.fingerprint=? AND p.event_id=? AND p.sequence=? AND a.sequence=p.sequence
             AND p.state IN ('pending','retry') AND p.next_attempt<=?
@@ -280,6 +293,9 @@ final class NotificationHistoryStore {
     /// Acceptance belongs to one delivery occurrence, including a request for its older body.
     /// A late failed request cannot change the retry state of a newer body revision.
     func finish(_ attempt: PushAttempt, state: String, nextAttempt: Date? = nil, problem: String? = nil) throws {
+        // A request already handed to Apple can still be accepted after origin arrives. Failed
+        // in-flight work must not turn the terminal exclusion back into a retry.
+        if state != "accepted", try isExcluded(attempt.event) { return }
         let revisionCondition = state == "accepted" ? "" : " AND sequence=?"
         let revisionValues: [Value] = state == "accepted" ? [] : [.integer(attempt.event.sequence ?? 0)]
         try execute("""
@@ -297,7 +313,7 @@ final class NotificationHistoryStore {
                     fingerprint.map { [.text($0)] } ?? [])
     }
 
-    private func archive(_ original: MirroredNotification, fingerprints: [String]) throws -> MirroredNotification {
+    private func archive(_ original: MirroredNotification, fingerprints: [String], sourceUUID: String? = nil) throws -> MirroredNotification {
         try execute("UPDATE metadata SET value=CAST(value AS INTEGER)+1 WHERE key='sequence'")
         guard let sequenceText = try scalarText("SELECT value FROM metadata WHERE key='sequence'"),
               let sequence = Int64(sequenceText), sequence > 0 else { throw StoreError.invalidEvent }
@@ -313,6 +329,8 @@ final class NotificationHistoryStore {
         // states: changed text must not show a second alert or repair unrelated provider errors.
         try execute("UPDATE push_outbox SET sequence=? WHERE event_id=?",
                     [.integer(sequence), .text(event.id)])
+        let excluded = try sourceUUID.map { try isExcluded(uuid: $0) } ?? isExcluded(event)
+        if excluded { return event }
         for fingerprint in Set(fingerprints) {
             // Explicit recipients can resume a source-suppressed occurrence after exact/DB
             // attribution repairs it. Acceptance and provider/token failures remain untouched.
@@ -326,6 +344,22 @@ final class NotificationHistoryStore {
                 """, [.text(fingerprint), .text(event.id), .integer(sequence)])
         }
         return event
+    }
+
+    private func isExcluded(uuid: String) throws -> Bool {
+        try scalarText("SELECT uuid FROM notification_excluded WHERE uuid=?", [.text(uuid)]) != nil
+    }
+
+    private func exclude(uuid: String) throws {
+        try execute("INSERT OR IGNORE INTO notification_excluded(uuid) VALUES(?)", [.text(uuid)])
+        // Keep the archive and Apple's prior acceptance. Every unsent recipient becomes terminal,
+        // so source/DB enrichment or provider reconfiguration cannot revive this UUID's alert.
+        try execute("""
+            UPDATE push_outbox SET state='suppressed',next_attempt=0,problem='Notification mirrored from iPhone'
+            WHERE state!='accepted' AND event_id IN (
+                SELECT event_id FROM notification_alias WHERE uuid=? UNION
+                SELECT event_id FROM source_seen WHERE source_id GLOB ?)
+            """, [.text(uuid), .text(uuid + ":*")])
     }
 
     private func event(at statement: OpaquePointer, column: Int32) throws -> MirroredNotification {

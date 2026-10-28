@@ -247,7 +247,9 @@ package final class NotificationMirror {
         guard enabled, !macID.isEmpty else { return }
         // The banner may disappear before another AX event or a database snapshot. Retain a
         // failed write in memory and retry; the observer's duplicate cache is not a durable ACK.
-        pendingBanners[banner.sourceUUID] = banner
+        var pending = banner
+        pending.isFromIPhone = banner.isFromIPhone || pendingBanners[banner.sourceUUID]?.isFromIPhone == true
+        pendingBanners[banner.sourceUUID] = pending
         flushPendingBanners()
     }
 
@@ -278,7 +280,7 @@ package final class NotificationMirror {
             for banner in Array(pendingBanners.values) {
                 // The store queues only attributed sources. The send-time check below also
                 // suppresses Sill itself, including source metadata received before its banner.
-                if try historyStore().ingestBanner(banner, fingerprints: pushRecipients()) != nil { changed = true }
+                if try historyStore().ingestBanner(banner, fingerprints: pushRecipients()) != nil || banner.isFromIPhone { changed = true }
                 pendingBanners.removeValue(forKey: banner.sourceUUID)
             }
         } catch {
@@ -303,26 +305,51 @@ package final class NotificationMirror {
             || registrations.values.contains { $0.topic == bundleID }
     }
 
+    private func canForward(_ event: MirroredNotification) -> Bool {
+        let explicitTest = event.id.hasPrefix("sill-test:")
+            && event.appBundleID == (Bundle.main.bundleIdentifier ?? "me.saffer.sill.mac")
+        return explicitTest || (!event.appBundleID.isEmpty && !isMirrorSource(event.appBundleID))
+    }
+
+    package struct ReplayBatch {
+        package let events: [MirroredNotification]
+        /// The last examined archive sequence, including excluded sources; nil pauses the drain.
+        package let nextSequence: Int64?
+    }
+
     /// Per-connection replay calls this in bounded batches. Persistence failure throws instead of
     /// making an unreadable history look empty and switching that client to live delivery.
     package func replayStart(for subscription: NotificationSubscription) throws -> Int64 {
         try historyStore().replayStart(historyID: subscription.historyID, afterSequence: subscription.afterSequence)
     }
 
-    package func replay(after sequence: Int64) throws -> [MirroredNotification] {
-        // The coordinator pauses its drain while disabled and never treats this as exhaustion.
-        guard enabled else { return [] }
-        return try historyStore().events(after: sequence)
+    package func replay(after sequence: Int64) throws -> ReplayBatch {
+        // Keep the cursor while disabled or while a known origin exclusion waits for retry.
+        guard enabled, !hasPendingOriginExclusion else { return ReplayBatch(events: [], nextSequence: nil) }
+        let history = try historyStore()
+        let events = try history.events(after: sequence)
+        // AX-only captures and older history can already contain Sill. Keep the archive, but
+        // apply the same source exclusion on TLS replay as on APNs delivery. Advance even when
+        // a whole page is excluded, so later ordinary notifications still reach the subscriber.
+        return ReplayBatch(events: try events.filter {
+            try !history.isExcluded($0) && canForward($0)
+        },
+                           nextSequence: events.last?.sequence)
     }
 
     package func replayFailed(_ error: Error) { historyFailure(error) }
 
+    private var hasPendingOriginExclusion: Bool {
+        pendingBanners.values.contains { $0.isFromIPhone }
+    }
+
     private func deliverPending() {
-        guard deliveryTask == nil, let provider, enabled, pushEnabled else { return }
+        guard deliveryTask == nil, let provider, enabled, pushEnabled, !hasPendingOriginExclusion else { return }
         let generation = deliveryGeneration
         deliveryTask = Task { [weak self] in
             guard let self else { return }
-            while !Task.isCancelled, self.deliveryGeneration == generation, self.enabled, self.pushEnabled {
+            while !Task.isCancelled, self.deliveryGeneration == generation, self.enabled, self.pushEnabled,
+                  !self.hasPendingOriginExclusion {
                 do {
                     self.pruneUnpairedRegistrations()
                     let targets = self.registrations.filter {
@@ -332,14 +359,15 @@ package final class NotificationMirror {
                     for attempt in attempts {
                         // No await occurs between these checks and entering provider.send. Each
                         // request uses the current registration revision, never a stale token snapshot.
-                        guard !Task.isCancelled, self.deliveryGeneration == generation, self.enabled, self.pushEnabled else { break }
+                        // A known origin waiting for a failed SQLite write also pauses unsent
+                        // work; the banner retry resumes this drain after exclusion is durable.
+                        guard !Task.isCancelled, self.deliveryGeneration == generation, self.enabled, self.pushEnabled,
+                              !self.hasPendingOriginExclusion else { break }
                         let key = attempt.fingerprint
                         guard let sending = self.registrations[key], self.isPaired?(sending.fingerprint) == true,
                               sending.topic == self.apns.topic, sending.environment == self.apns.environment else { continue }
                         guard try self.historyStore().isCurrent(attempt) else { continue }
-                        let explicitTest = attempt.event.id.hasPrefix("sill-test:")
-                            && attempt.event.appBundleID == (Bundle.main.bundleIdentifier ?? "me.saffer.sill.mac")
-                        guard explicitTest || (!attempt.event.appBundleID.isEmpty && !self.isMirrorSource(attempt.event.appBundleID)) else {
+                        guard self.canForward(attempt.event) else {
                             // Terminal suppression also handles older queued events without a busy
                             // retry loop. Provider reconfiguration must not revive a mirror loop.
                             try self.historyStore().finish(attempt, state: "suppressed", problem: "Unconfirmed or mirrored notification source")

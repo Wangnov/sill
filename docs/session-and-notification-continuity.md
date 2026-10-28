@@ -134,13 +134,22 @@ prevents a late candidate from reopening the push, including after a failed writ
 Conflicting full-UUID sources remain unassigned until the database resolves them. Accepted
 pushes remain accepted through every correction. Metadata alone never creates message text.
 
-Requiring an identified source prevents a Sill alert mirrored back from an iPhone from triggering
-another Sill alert. Own Sill bundle IDs and configured/registered
-push topics are excluded from background delivery; explicit test-button events are an exception.
-Sending rechecks the current archive/outbox revision after waiting on any earlier request, so a
-late source correction cannot pass the source gate using a stale batch. An accepted event stays
-accepted across source corrections. Source icons use the existing cache or the exact bundle's
-Launch Services registration, including development apps outside the applications directories.
+To prevent a notification mirrored from iPhone from returning to it, an explicit iPhone-origin
+marker on the Mac's notification AX group persistently excludes that notification UUID from
+forwarding. TLS replay and APNs use the same source gate: an unknown source stays in Mac history
+while awaiting attribution and is not forwarded; Sill's own bundle IDs and configured/registered
+push topics are excluded. Explicit test-button events are an exception. Existing entries are
+retained, and an already sent request cannot be recalled. Sending rechecks the current
+archive/outbox revision after waiting on any earlier request, so a late source correction cannot
+pass the source gate using a stale batch. An accepted event stays accepted across source corrections.
+Source icons use the existing cache or the exact bundle's Launch Services registration, including
+development apps outside the applications directories.
+
+The origin matcher uses NotificationCenter's localized system description templates and binds
+the separately captured full body, so the same wording inside a message cannot exclude it.
+Empty bodies and unverified reordered templates remain unclassified; this is not a universal
+origin API. The normal source gate still applies to those records. No new setting or wire field
+is introduced for this automatic exclusion.
 
 These log messages are private OS output, not a supported Apple notification API. Their absence,
 redaction or a changed format can leave the event unknown. The optional stream runs only while
@@ -166,12 +175,14 @@ current archive from its beginning. Kind **202** events carry optional `historyI
 fields, so older JSON clients remain compatible. Only the authenticated, currently paired TLS
 subscriber receives its replay. Every connection uses one ordered archive drain for both replay
 and newly captured events, in batches of at most 50 with a scheduler yield between batches.
-A temporary local read failure retains the cursor and retries after five seconds. This batching
+The replay cursor advances to the last examined archive sequence even when a whole batch is
+excluded, allowing later eligible events through. A temporary local read failure retains the
+cursor and retries after five seconds. This batching
 is not a network backpressure mechanism. No application-level acknowledgment message is added.
 
 Turning off **Mirror Mac notifications** stops source collection, new TLS history sends and
 APNs requests. It retains local history, pending push work and each connected subscriber's last
-enqueued sequence. Turning it on wakes those ordered drains, so a later event cannot jump over
+examined sequence. Turning it on wakes those ordered drains, so a later event cannot jump over
 the saved backlog. Records retained by macOS during the pause can be collected after resuming.
 Requests already handed to Apple or bytes already queued for a connection cannot be recalled.
 
@@ -472,6 +483,12 @@ resumed, newly captured ChatGPT notifications also displayed their source avatar
 observations are separate from lifecycle recovery, notification-tap and locked-presentation
 acceptance. Apple accepting a push is not proof of device display; record those results separately.
 The system-store retention/schema limits above remain even after device tests pass.
+
+The iPhone-origin loop-prevention change has not yet completed a live end-to-end check on this
+Mac: Apple's first-connection authentication succeeded, but iPhone Mirroring then timed out.
+Native Mac control notifications, including one whose body ends with the localized origin wording,
+reached the actual phone once each after foreground history replay. That control proves normal
+delivery and guards against text-based false positives; it does not prove the reverse Apple path.
 
 A later controlled run on the same date used a separate macOS notification sender with a
 magenta/yellow icon. Its first notification reached iPhone with the Sill fallback before that

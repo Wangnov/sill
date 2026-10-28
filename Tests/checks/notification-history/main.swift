@@ -564,6 +564,111 @@ func checkMirrorBannerRetry(root: URL) async throws {
           "only authoritative DB source attribution creates a single pending APNs delivery")
 }
 
+@MainActor
+func checkMirrorReplayExclusion(root: URL) throws {
+    let suite = "sill.mirror-replay-check." + UUID().uuidString
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let historyURL = root.appendingPathComponent("mirror-replay-exclusion/history.sqlite")
+    let mirror = NotificationMirror(defaults: defaults, historyURL: historyURL)
+    defer { mirror.stop() }
+    mirror.enabled = true
+    mirror.apns = APNsConfiguration(teamID: "", keyID: "", topic: "test.configured.sill", keyPath: "", environment: "sandbox")
+    mirror.start(macID: "replay-mac", isPaired: { _ in true }, onHistoryAvailable: {})
+    mirror.subscribe(NotificationSubscription(enabled: true, pushToken: "0102", topic: "test.registered.sill",
+                                              environment: "sandbox"), fingerprint: Data([1, 2, 3]))
+    let collector = NotificationMirrorCollector.latest!
+    let uuid = String(repeating: "c8", count: 16)
+    collector.onSource?(NotificationSourceAttribution(uuid: uuid, bundleID: "me.saffer.sill", evidence: .exact), "Sill")
+    collector.onBanner?(NotificationBannerObservation(sourceUUID: uuid, title: "Sill AX fixture", subtitle: "",
+                                                      body: "An already mirrored notification", observedAt: 2_000,
+                                                      displayAppName: nil))
+    let ledger = try NotificationHistoryStore(url: historyURL)
+    let ownSources = ["me.saffer.sill", "me.saffer.sill.mac", "test.configured.sill", "test.registered.sill"]
+    // Existing archives need the same exclusion as new AX captures. Fill one bounded page with
+    // both forms, without touching the person's history or any system notification database.
+    for index in 1..<50 {
+        var own = event("old-self-\(index)")
+        own.appBundleID = ownSources[index % ownSources.count]
+        _ = try ledger.append(own, fingerprints: [])
+    }
+    let first = try mirror.replay(after: 0)
+    check(try first.events.isEmpty && first.nextSequence == 50 && ledger.events(after: 0).count == 50,
+          "self-origin AX and archived sources stay saved but an entirely excluded replay page advances")
+    var ordinary = event("ordinary-after-self-page")
+    ordinary.appBundleID = "me.saffer.sillish"
+    _ = try ledger.append(ordinary, fingerprints: [])
+    mirror.sendTestNotification()
+    let next = try mirror.replay(after: first.nextSequence!)
+    let end = try mirror.replay(after: next.nextSequence!)
+    check(next.events.count == 2 && next.events[0].id == ordinary.id && next.events[1].id.hasPrefix("sill-test:") &&
+          next.events.map(\.sequence) == [51, 52] && next.nextSequence == 52 && end.events.isEmpty && end.nextSequence == nil,
+          "replay continues past excluded history, preserves unrelated sources and the explicit Sill test, then ends at exhaustion")
+}
+
+@MainActor
+func checkMirrorIPhoneOrigin(root: URL) throws {
+    let suite = "sill.iphone-origin-check." + UUID().uuidString
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let historyURL = root.appendingPathComponent("mirror-iphone-origin/history.sqlite")
+    let mirror = NotificationMirror(defaults: defaults, historyURL: historyURL)
+    defer { mirror.stop() }
+    mirror.enabled = true
+    mirror.start(macID: "origin-mac", isPaired: { _ in true }, onHistoryAvailable: {})
+    let peers = [Data([1]), Data([2])]
+    for peer in peers {
+        mirror.subscribe(NotificationSubscription(enabled: true, pushToken: "0102", topic: "test.ios.apns",
+                                                  environment: "sandbox"), fingerprint: peer)
+    }
+    let collector = NotificationMirrorCollector.latest!
+    let uuid = String(repeating: "d9", count: 16)
+    var banner = NotificationBannerObservation(sourceUUID: uuid, title: "Origin fixture", subtitle: "",
+                                               body: "Synthetic iPhone origin fixture", observedAt: 2_100, displayAppName: nil)
+    collector.onBanner?(banner)
+    let unknown = try mirror.replay(after: 0)
+    collector.onSource?(NotificationSourceAttribution(uuid: uuid, bundleID: "test.original", evidence: .exact), "Original App")
+    let attributed = try mirror.replay(after: unknown.nextSequence!)
+    check(unknown.events.isEmpty && unknown.nextSequence == 1 && attributed.events.count == 1 &&
+          attributed.events[0].sequence == 2 && attributed.events[0].id == "notification-ax:" + uuid,
+          "unknown AX text waits on the Mac; a source revision releases its same occurrence to TLS")
+
+    let ledger = try NotificationHistoryStore(url: historyURL)
+    let stale = try ledger.duePushes(at: Date(), fingerprints: [peers[0].base64EncodedString()])[0]
+    let accepted = try ledger.duePushes(at: Date(), fingerprints: [peers[1].base64EncodedString()])[0]
+    try ledger.finish(accepted, state: "accepted")
+    sql(historyURL, "CREATE TRIGGER fail_origin BEFORE INSERT ON notification_excluded BEGIN SELECT RAISE(ABORT,'fixture'); END")
+    banner.isFromIPhone = true
+    collector.onBanner?(banner) // Origin can arrive after the message text and source.
+    let paused = try mirror.replay(after: 0)
+    banner.isFromIPhone = false
+    collector.onBanner?(banner) // A later incomplete AX read must not weaken failed origin evidence.
+    sql(historyURL, "DROP TRIGGER fail_origin")
+    collector.onBanner?(banner)
+    try ledger.finish(stale, state: "retry", nextAttempt: Date()) // A failed in-flight response arrives late.
+    try ledger.retryFailures()
+    check(try paused.events.isEmpty && paused.nextSequence == nil && !ledger.isCurrent(stale) &&
+          ledger.duePushes(at: Date(), fingerprints: peers.map { $0.base64EncodedString() }).isEmpty &&
+          count(historyURL, "SELECT count(*) FROM push_outbox WHERE state='suppressed'") == 1 &&
+          count(historyURL, "SELECT count(*) FROM push_outbox WHERE state='accepted'") == 1,
+          "late iPhone origin survives a failed write and weaker AX read, pauses TLS, withdraws unsent retries and preserves Apple acceptance")
+
+    collector.onSource?(NotificationSourceAttribution(uuid: uuid, bundleID: "test.original", evidence: .exact), "Renamed Original App")
+    let sourceID = uuid + ":" + String(TimeInterval(42).bitPattern, radix: 16)
+    var databaseEvent = event("notification-store:" + sourceID)
+    databaseEvent.appBundleID = "test.authoritative"
+    collector.onSnapshot?(snapshot([NotificationStoreRecord(sourceID: sourceID, fingerprint: "origin-db", event: databaseEvent)]))
+    mirror.stop()
+    let reloaded = NotificationMirror(defaults: defaults, historyURL: historyURL)
+    defer { reloaded.stop() }
+    check(try reloaded.replay(after: 0).events.isEmpty && ledger.events(after: 0).count == 1 &&
+          ledger.events(after: 0)[0].appBundleID == databaseEvent.appBundleID &&
+          ledger.duePushes(at: Date(), fingerprints: peers.map { $0.base64EncodedString() }).isEmpty &&
+          count(historyURL, "SELECT count(*) FROM notification_excluded") == 1 &&
+          count(historyURL, "SELECT count(*) FROM push_outbox WHERE state='accepted'") == 1,
+          "iPhone origin persists across source/DB enrichment and restart, retaining history without TLS or APNs redelivery")
+}
+
 let root = FileManager.default.temporaryDirectory.appendingPathComponent("sill-history-check-" + UUID().uuidString)
 defer { try? FileManager.default.removeItem(at: root) }
 let url = root.appendingPathComponent("private/history.sqlite")
@@ -677,21 +782,23 @@ Task { @MainActor in
         mirror.start(macID: "test-mac", isPaired: { _ in true }, onHistoryAvailable: { wakes += 1 })
         mirror.receive(event("first-live"))
         mirror.receive(event("second-live"))
-        check(try mirror.replay(after: 0).map(\.sequence) == [1, 2], "live drain reads committed archive sequence")
+        check(try mirror.replay(after: 0).events.map(\.sequence) == [1, 2], "live drain reads committed archive sequence")
         mirror.enabled = false
         let start = try mirror.replayStart(for: NotificationSubscription(enabled: true))
-        check(try mirror.replay(after: start).isEmpty, "disabled mirroring sends no saved history")
+        check(try mirror.replay(after: start).events.isEmpty, "disabled mirroring sends no saved history")
         let beforeResume = wakes
         mirror.enabled = true
         check(wakes == beforeResume + 1, "off to on explicitly wakes paused subscription drains")
-        check(try mirror.replay(after: start).count == 2, "resuming recovers backlog without advancing the paused cursor")
+        check(try mirror.replay(after: start).events.count == 2, "resuming recovers backlog without advancing the paused cursor")
         mirror.stop()
         let reloaded = NotificationMirror(defaults: defaults, historyURL: isolated)
-        check(try reloaded.replay(after: 0).map(\.id) == ["first-live", "second-live"], "stop/restart retains recoverable history")
+        check(try reloaded.replay(after: 0).events.map(\.id) == ["first-live", "second-live"], "stop/restart retains recoverable history")
         reloaded.stop()
+        try checkMirrorReplayExclusion(root: root)
+        try checkMirrorIPhoneOrigin(root: root)
         try await checkMirrorBannerRetry(root: root)
         try await checkMirrorPendingWithdrawal(root: root)
-        print("notification-history: atomic baseline/archive, AX/DB aliases, evidence priority/migration, pending withdrawal retry, source-gated outbox, ordered replay and APNs classification passed (offline)")
+        print("notification-history: atomic archive, AX/DB aliases, source evidence/retry, durable origin exclusion, source-gated delivery, ordered replay and APNs classification passed (offline)")
         try? FileManager.default.removeItem(at: root)
         exit(0)
     } catch {

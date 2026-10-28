@@ -2763,7 +2763,7 @@ package final class StreamCoordinator {
                                   payload: Wire.encode(event)), to: connection)
     }
 
-    /// Only this authenticated subscriber receives its events. Its last enqueued sequence is
+    /// Only this authenticated subscriber receives its events. Its last examined sequence is
     /// retained while disabled, and every resume starts at that cursor. Each batch is synchronous;
     /// a final empty read and removing its task token have no intervening await, so no wake is lost.
     private func drainNotifications(to connection: NWConnection, replayID: UUID) async {
@@ -2781,11 +2781,11 @@ package final class StreamCoordinator {
                     clients[id]?.notificationSequence = try notificationMirror.replayStart(for: subscription)
                 }
                 let batch = try notificationMirror.replay(after: clients[id]?.notificationSequence ?? 0)
-                if batch.isEmpty { return }
-                for event in batch {
+                guard let nextSequence = batch.nextSequence else { return }
+                for event in batch.events {
                     sendNotification(event, to: connection)
-                    clients[id]?.notificationSequence = event.sequence ?? clients[id]?.notificationSequence
                 }
+                clients[id]?.notificationSequence = nextSequence
                 await Task.yield()
             } catch {
                 notificationMirror.replayFailed(error)

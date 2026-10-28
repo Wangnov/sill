@@ -53,6 +53,7 @@ final class NotificationBannerObserver {
     private var retries: [CFHashCode: (id: UUID, task: Task<Void, Never>)] = [:]
     private var lastStatus: Status?
     private var lastFields: [String: NotificationBannerParser.Fields] = [:]
+    private var iPhoneOrigins: Set<String> = []
     private var identities: [String] = []
 
     func start() {
@@ -73,6 +74,7 @@ final class NotificationBannerObserver {
         disconnect()
         lastStatus = nil
         lastFields.removeAll()
+        iPhoneOrigins.removeAll()
         identities.removeAll()
     }
 
@@ -187,12 +189,21 @@ final class NotificationBannerObserver {
     private func accept(_ observation: NotificationBannerObservation) {
         let fields = NotificationBannerParser.Fields(title: observation.title, subtitle: observation.subtitle,
                                                      body: observation.body, displayAppName: observation.displayAppName)
-        guard lastFields[observation.sourceUUID] != fields else { return }
+        let originChanged = observation.isFromIPhone && !iPhoneOrigins.contains(observation.sourceUUID)
+        guard lastFields[observation.sourceUUID] != fields || originChanged else { return }
+        if observation.isFromIPhone { iPhoneOrigins.insert(observation.sourceUUID) }
+        var confirmed = observation
+        confirmed.isFromIPhone = iPhoneOrigins.contains(observation.sourceUUID)
         if lastFields[observation.sourceUUID] == nil { identities.append(observation.sourceUUID) }
         lastFields[observation.sourceUUID] = fields
-        if identities.count > 512 { lastFields.removeValue(forKey: identities.removeFirst()) }
+        if identities.count > 512 {
+            let oldest = identities.removeFirst()
+            lastFields.removeValue(forKey: oldest)
+            iPhoneOrigins.remove(oldest)
+        }
         // Compare the previous version, not a set of all text ever seen: A → B → A is observable.
-        onObservation?(observation)
+        // A late origin marker is also a change, even when all message text stayed the same.
+        onObservation?(confirmed)
     }
 }
 
@@ -295,9 +306,13 @@ private final class NotificationBannerAXReader: @unchecked Sendable {
             }
             visit(group, depth: 0)
             guard complete, let fields = NotificationBannerParser.fields(from: lines) else { return }
+            // Only the UUID group's system description carries the iPhone origin label.
+            // Match against the separately read full body so message text cannot impersonate it.
+            let description = values(group, [kAXDescriptionAttribute]).first as? String ?? ""
+            let fromIPhone = NotificationBannerParser.isFromIPhone(groupMetadata: [description], body: fields.body)
             observations.append(.init(sourceUUID: uuid, title: fields.title, subtitle: fields.subtitle,
                                       body: fields.body, observedAt: Date().timeIntervalSince1970,
-                                      displayAppName: fields.displayAppName))
+                                      displayAppName: fields.displayAppName, isFromIPhone: fromIPhone))
         }
     }
 }

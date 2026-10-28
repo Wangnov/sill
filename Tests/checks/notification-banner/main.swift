@@ -115,6 +115,39 @@ let otherDelivery = NotificationBannerObservation(sourceUUID: groupFixtures[1].1
 check(observation == same, "observation value equality")
 check(observation != otherDelivery, "identical payloads from distinct UUIDs remain distinct observations")
 check(observation.observedAt == 1_793_154_173.125, "observation keeps Unix timestamp precision")
+// These are system resource templates, not yet captured phone AX fixtures. Only the group's
+// own metadata is supplied; content fields remain unrelated to this source classification.
+let originFixtures: [(String, String, String)] = [
+    ("%@, %@, from iPhone", "Probe, 1 notification, from iPhone", "1 notification"),
+    ("%@, %@, stacked, from iPhone", "Probe, 2 notifications, stacked, from iPhone", "2 notifications"),
+    ("Summary: %@, from iPhone", "Summary: Probe, from iPhone", "Probe"),
+    ("Stacked summary: %@, from iPhone", "Stacked summary: Probe, from iPhone", "Probe"),
+    ("%@，%@，来自iPhone", "探针，1条通知，来自iPhone", "1条通知"),
+    ("%@，%@，已叠放，来自iPhone", "探针，2条通知，已叠放，来自iPhone", "2条通知"),
+    ("%@，%@，來自iPhone", "探針，1則通知，來自iPhone", "1則通知"),
+    ("%@、%@，來自iPhone", "探針、1則通知，來自iPhone", "1則通知"),
+    ("%1$@, %2$@, from iPhone", "Probe, 1 notification, from iPhone", "1 notification"),
+]
+check(originFixtures.allSatisfy { template, metadata, body in
+    Parser.isFromIPhone(groupMetadata: [metadata], body: body, templates: [template])
+} && !Parser.isFromIPhone(groupMetadata: ["Probe, 1 notification", "来自iPhone", "from iPhone"],
+                         body: "1 notification", templates: originFixtures.map(\.0))
+  && !Parser.isFromIPhone(groupMetadata: ["Probe, 1 notification, from iPhone extra"],
+                         body: "1 notification", templates: ["%@, %@, from iPhone"])
+  && !Parser.isFromIPhone(groupMetadata: ["探针，1条通知，来自iPhone"], body: "1条通知", templates: ["from iPhone"]),
+      "only complete localized system group templates identify phone origin, including positional slots")
+let localBodyWithEnglishOrigin = "Mac native control, from iPhone"
+let localBodyWithChineseOrigin = "Mac native control，来自iPhone"
+check(!Parser.isFromIPhone(groupMetadata: ["Probe Alert, " + localBodyWithEnglishOrigin],
+                          body: localBodyWithEnglishOrigin, templates: ["%@, %@, from iPhone"])
+   && !Parser.isFromIPhone(groupMetadata: ["探针提示，" + localBodyWithChineseOrigin],
+                          body: localBodyWithChineseOrigin, templates: ["%@，%@，来自iPhone"])
+   && Parser.isFromIPhone(groupMetadata: ["Probe Alert, " + localBodyWithEnglishOrigin + ", from iPhone"],
+                         body: localBodyWithEnglishOrigin, templates: ["%@, %@, from iPhone"])
+   && !Parser.isFromIPhone(groupMetadata: ["Probe, , from iPhone"], body: "", templates: ["%@, %@, from iPhone"])
+   && !Parser.isFromIPhone(groupMetadata: ["1 notification, Probe, from iPhone"],
+                          body: "1 notification", templates: ["%2$@, %1$@, from iPhone"]),
+      "an iPhone phrase inside the complete local body is not a system origin marker; uncertain shapes fail closed")
 requireSendable(observation)
 requireSendable(bodyOnly)
 requireSendable(Line(identifier: "body", value: probeBody))
