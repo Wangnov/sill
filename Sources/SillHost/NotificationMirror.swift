@@ -253,6 +253,11 @@ package final class NotificationMirror {
 
     private func receiveSource(_ source: NotificationSourceAttribution, appName: String) {
         guard enabled, !macID.isEmpty else { return }
+        // Preserve stronger evidence while a failed write waits for retry. In particular, a
+        // late arrival must not undo a conflict withdrawal which has not reached SQLite yet.
+        let pendingEvidence = pendingSources[source.uuid]?.source.evidence
+        if pendingEvidence == .exact && source.evidence != .exact { return }
+        if pendingEvidence == .ambiguous && source.evidence == .arrival { return }
         pendingSources[source.uuid] = (source, appName)
         flushPendingBanners()
     }
@@ -261,13 +266,13 @@ package final class NotificationMirror {
         guard enabled, !macID.isEmpty, !pendingBanners.isEmpty || !pendingSources.isEmpty else { return }
         var changed = false
         do {
-            // usernoted's removal metadata can name a replaced banner that never reached the
-            // retained database. This exact UUID join revises its existing event; it never
-            // creates notification text from a log line. Keep failed writes for the same retry.
+            // Arrival matches can send immediately; later full-UUID evidence confirms or fixes
+            // the same event. A log line never creates message text. Keep failed writes for retry.
             for (uuid, entry) in Array(pendingSources) {
                 let recipients = isMirrorSource(entry.source.bundleID) ? [] : pushRecipients()
                 if try historyStore().enrichBannerSource(uuid: uuid, bundleID: entry.source.bundleID,
-                        appName: entry.appName, fingerprints: recipients) != nil { changed = true }
+                        appName: entry.appName, evidence: entry.source.evidence,
+                        fingerprints: recipients) != nil { changed = true }
                 pendingSources.removeValue(forKey: uuid)
             }
             for banner in Array(pendingBanners.values) {

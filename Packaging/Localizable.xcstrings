@@ -4360,46 +4360,46 @@
         }
       }
     },
-    "Source recovery for replaced notifications is connected.": {
+    "Live notification source matching and recovery are connected.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Source recovery for replaced notifications is connected."
+            "value": "Live notification source matching and recovery are connected."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "已连接通知来源补全，可识别被替换的通知。"
+            "value": "实时通知来源识别与补全已连接。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "已連線通知來源補全，可識別被替換的通知。"
+            "value": "即時通知來源識別與補全已連線。"
           }
         }
       }
     },
-    "Source recovery is unavailable. Live banners and stored notifications still work.": {
+    "Notification source matching is unavailable. Live banners and stored notifications still work.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Source recovery is unavailable. Live banners and stored notifications still work."
+            "value": "Notification source matching is unavailable. Live banners and stored notifications still work."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "通知来源补全暂不可用。实时横幅和已保存通知仍可正常收集。"
+            "value": "通知来源识别暂不可用。实时横幅和已保存通知仍可正常收集。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "通知來源補全暫不可用。即時橫幅和已儲存通知仍可正常收集。"
+            "value": "通知來源識別暫不可用。即時橫幅和已儲存通知仍可正常收集。"
           }
         }
       }

@@ -11,10 +11,29 @@ struct NotificationBannerObservation: Sendable, Equatable {
     let displayAppName: String?
 }
 
-/// An exact identity hint for an existing AX UUID, never a new notification occurrence.
+/// Arrival uses a short-lived unique prefix/time match; exact uses a full UUID or the database.
+/// Ambiguous withdraws only an arrival candidate. These levels stay internal to source handling.
+enum NotificationSourceEvidence: String, Codable, Sendable {
+    case arrival, exact, ambiguous
+}
+
+/// An identity hint for an existing AX UUID, never a new notification occurrence.
 struct NotificationSourceAttribution: Equatable, Sendable {
     let uuid: String
     let bundleID: String
+    let evidence: NotificationSourceEvidence
+
+    init(uuid: String, bundleID: String, evidence: NotificationSourceEvidence = .exact) {
+        self.uuid = uuid
+        self.bundleID = bundleID
+        self.evidence = evidence
+    }
+}
+
+struct NotificationArrivalObservation: Equatable, Sendable {
+    let uuidPrefix8: String
+    let bundleID: String
+    let occurredAt: TimeInterval
 }
 
 /// Pure parsing shared by the live banner adapter and offline fixtures.

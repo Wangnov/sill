@@ -11,6 +11,16 @@ enum NotificationSourceParser {
     private static let messagePattern = try! NSRegularExpression(pattern:
         #"\A_removeDelivered: Removing \[("# + uuidPattern + "(?:, " + uuidPattern
         + #")*)\] from ([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)\z"#)
+    // Verified Delivering/Presenting headers from the same synthetic run. req is the app's own
+    // request ID; source/ident are different identifiers and never used for the UUID join.
+    private static let arrivalPattern = try! NSRegularExpression(pattern:
+        #"\A(Delivering|Presenting) <NotificationRecord app:"([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)" ident:"[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}" req:"[^"\r\n]*" uuid:"([0-9A-Fa-f]{8})" source:"[0-9A-Fa-f]{8}" dismissAfterDefaultAction:true>([^\r\n]*)\z"#)
+    private static let deliveringSuffix = try! NSRegularExpression(pattern:
+        #"\A to \[(?: \.(?:alert|lockScreen|notificationCenter))* \]: updatedExisting: (?:false|true)\z"#)
+    private static let presentingSuffix = try! NSRegularExpression(pattern:
+        #"\A as banner \(\[(?:"(?:badge|sound|alert)"(?:, "(?:badge|sound|alert)")*)?\]\)\z"#)
+    private static let timestampStyle = Date.ISO8601FormatStyle(dateSeparator: .dash, dateTimeSeparator: .space,
+        timeSeparator: .colon, timeZoneSeparator: .omitted, includingFractionalSeconds: true)
 
     static func parse(message: String) -> NotificationSourceAttribution? {
         let sources = parseAll(message: message)
@@ -34,13 +44,51 @@ enum NotificationSourceParser {
     }
 
     static func parseAll(line: Data) -> [NotificationSourceAttribution] {
+        guard let object = record(line) else { return [] }
+        return parseAll(message: object.message)
+    }
+
+    static func parseArrival(message: String, occurredAt: TimeInterval) -> NotificationArrivalObservation? {
+        let text = message as NSString
+        guard occurredAt.isFinite,
+              let match = arrivalPattern.firstMatch(in: message, range: NSRange(location: 0, length: text.length)) else { return nil }
+        let kind = text.substring(with: match.range(at: 1))
+        let suffix = text.substring(with: match.range(at: 4))
+        let suffixPattern = kind == "Delivering" ? deliveringSuffix : presentingSuffix
+        guard suffixPattern.firstMatch(in: suffix, range: NSRange(location: 0, length: (suffix as NSString).length)) != nil else { return nil }
+        let bundle = text.substring(with: match.range(at: 2))
+        guard bundle.utf8.count <= 255 else { return nil }
+        return .init(uuidPrefix8: text.substring(with: match.range(at: 3)).lowercased(), bundleID: bundle, occurredAt: occurredAt)
+    }
+
+    static func parseArrival(line: Data) -> NotificationArrivalObservation? {
+        guard let object = record(line), let timestamp = object.timestamp,
+              let date = try? timestampStyle.parse(timestamp) else { return nil }
+        return parseArrival(message: object.message, occurredAt: date.timeIntervalSince1970)
+    }
+
+    static func events(line: Data) -> [NotificationSourceLogEvent] {
+        guard let object = record(line) else { return [] }
+        let exact = parseAll(message: object.message)
+        if !exact.isEmpty { return exact.map { .source($0) } }
+        guard let timestamp = object.timestamp, let date = try? timestampStyle.parse(timestamp),
+              let arrival = parseArrival(message: object.message, occurredAt: date.timeIntervalSince1970) else { return [] }
+        return [.arrival(arrival)]
+    }
+
+    private static func record(_ line: Data) -> (message: String, timestamp: String?)? {
         guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               object["processImagePath"] as? String == "/usr/sbin/usernoted",
               object["subsystem"] as? String == "com.apple.unc",
               object["category"] as? String == "application",
-              let message = object["eventMessage"] as? String else { return [] }
-        return parseAll(message: message)
+              let message = object["eventMessage"] as? String else { return nil }
+        return (message, object["timestamp"] as? String)
     }
+}
+
+enum NotificationSourceLogEvent: Equatable, Sendable {
+    case source(NotificationSourceAttribution)
+    case arrival(NotificationArrivalObservation)
 }
 
 /// Pipe reads may split a JSON record anywhere or return many records together. Only complete,
@@ -51,8 +99,12 @@ struct NotificationSourceLineDecoder {
     private static let maximumLine = 64 * 1024
 
     mutating func append(_ data: Data) -> [NotificationSourceAttribution] {
+        appendEvents(data).compactMap { if case .source(let source) = $0 { return source }; return nil }
+    }
+
+    mutating func appendEvents(_ data: Data) -> [NotificationSourceLogEvent] {
         let pieces = data.split(separator: 10, omittingEmptySubsequences: false)
-        var result: [NotificationSourceAttribution] = []
+        var result: [NotificationSourceLogEvent] = []
         for (index, piece) in pieces.enumerated() {
             if !discarding {
                 if pending.count + piece.count > Self.maximumLine { pending.removeAll(); discarding = true }
@@ -61,7 +113,7 @@ struct NotificationSourceLineDecoder {
             guard index < pieces.count - 1 else { continue }
             if !discarding {
                 if pending.last == 13 { pending.removeLast() }
-                result.append(contentsOf: NotificationSourceParser.parseAll(line: pending))
+                result.append(contentsOf: NotificationSourceParser.events(line: pending))
             }
             pending.removeAll(keepingCapacity: true)
             discarding = false
@@ -72,11 +124,14 @@ struct NotificationSourceLineDecoder {
 
 /// Optional best-effort source completion for AX-only notifications. This reads only a narrowly
 /// selected metadata message; it never reads the notification DB, operates UI, or logs raw lines.
-/// The removal/replacement message can arrive later than the banner, so it only fills identity.
+/// Arrival carries only a UUID prefix and is a candidate; removal/replacement carries full UUIDs.
+/// Both only fill identity on existing observations, never manufacture notification text.
 @MainActor
 final class NotificationSourceObserver {
     enum Status: Equatable { case running, stopped, unavailable }
     var onSource: ((NotificationSourceAttribution) -> Void)?
+    var onArrival: ((NotificationArrivalObservation) -> Void)?
+    var onReset: (() -> Void)?
     var onStatus: ((Status) -> Void)?
 
     private var session: NotificationSourceLogSession?
@@ -105,6 +160,7 @@ final class NotificationSourceObserver {
         retry = nil
         session?.stop()
         session = nil
+        onReset?()
         status(.stopped)
     }
 
@@ -112,10 +168,12 @@ final class NotificationSourceObserver {
 
     private func launch() {
         guard enabled, session == nil else { return }
+        let current = generation
+        onReset?()
+        guard enabled, generation == current, session == nil else { return }
         let next = NotificationSourceLogSession()
         let id = next.id
         let started = next.started
-        let current = generation
         session = next
         do {
             let events = try next.start()
@@ -128,6 +186,11 @@ final class NotificationSourceObserver {
                         for source in sources {
                             guard self.enabled, self.generation == current else { return }
                             self.onSource?(source)
+                        }
+                    case .arrivals(let arrivals):
+                        for arrival in arrivals {
+                            guard self.enabled, self.generation == current else { return }
+                            self.onArrival?(arrival)
                         }
                     case .ended:
                         self.reading = nil
@@ -145,7 +208,10 @@ final class NotificationSourceObserver {
 
     private func exited(id: UUID, started: TimeInterval) {
         guard session?.id == id else { return }
+        let current = generation
         session = nil
+        onReset?()
+        guard generation == current else { return }
         // A healthy long-lived stream gets a fresh recovery allowance. Fast repeated failures
         // stop after four retries, with an explicit unavailable status until start is requested.
         if ProcessInfo.processInfo.systemUptime - started >= 30 { retryCount = 0 }
@@ -181,7 +247,7 @@ final class NotificationSourceObserver {
 /// termination handler. Stopping never waits on the main actor; a stuck owned child is killed
 /// after a short grace period, which also releases the reader's pipe and its retained session.
 final class NotificationSourceLogSession: @unchecked Sendable {
-    enum Event: Sendable { case sources([NotificationSourceAttribution]), ended }
+    enum Event: Sendable { case sources([NotificationSourceAttribution]), arrivals([NotificationArrivalObservation]), ended }
     let id = UUID()
     let started = ProcessInfo.processInfo.systemUptime
     private let process = Process()
@@ -194,7 +260,7 @@ final class NotificationSourceLogSession: @unchecked Sendable {
     // always constructs this with the real fixed command and narrow metadata predicate.
     init(executableURL: URL = URL(fileURLWithPath: "/usr/bin/log"), arguments: [String] =
         ["stream", "--style", "ndjson", "--level", "info", "--predicate",
-            #"process == "usernoted" AND subsystem == "com.apple.unc" AND category == "application" AND eventMessage BEGINSWITH "_removeDelivered: Removing [""#]
+            #"process == "usernoted" AND subsystem == "com.apple.unc" AND category == "application" AND (eventMessage BEGINSWITH "_removeDelivered: Removing [" OR eventMessage BEGINSWITH "Delivering <NotificationRecord app:" OR eventMessage BEGINSWITH "Presenting <NotificationRecord app:")"#]
     ) {
         self.executableURL = executableURL
         self.arguments = arguments
@@ -225,8 +291,12 @@ final class NotificationSourceLogSession: @unchecked Sendable {
                 let count = buffer.withUnsafeMutableBytes { Darwin.read(handle.fileDescriptor, $0.baseAddress!, $0.count) }
                 if count < 0, errno == EINTR { continue }
                 guard count > 0 else { break }
-                let sources = decoder.append(Data(buffer.prefix(count)))
-                if !sources.isEmpty { continuation.yield(.sources(sources)) }
+                for event in decoder.appendEvents(Data(buffer.prefix(count))) {
+                    switch event {
+                    case .source(let source): continuation.yield(.sources([source]))
+                    case .arrival(let arrival): continuation.yield(.arrivals([arrival]))
+                    }
+                }
             }
         }
         do { try process.run() }

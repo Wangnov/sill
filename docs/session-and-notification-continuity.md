@@ -107,22 +107,32 @@ the alias is a conservative correlation, not a universal exactly-once guarantee.
 request for an event is not rearmed when the database enriches that same event.
 
 AX-only events are archived and synchronized over paired TLS immediately, but do not create
-APNs outbox work until their posting app is identified. The retained database is the primary
-source. On the tested macOS 27 build, a narrow `usernoted` log stream also supplies exact source
-metadata when a notification is removed or replaced:
+APNs outbox work until their posting app is identified. The retained database is authoritative.
+On the tested macOS 27 build, a narrow `usernoted` log stream provides two levels of evidence:
+
+- `Delivering` and `Presenting` records carry an app bundle ID and eight-character UUID prefix.
+  A candidate is emitted only when exactly one recent AX UUID and one app share that prefix,
+  with occurrence timestamps within two seconds. The matcher retains observations for ten
+  seconds, deduplicates both log forms, and clears its cache when the stream restarts. It does
+  not compare message text or caller-supplied request IDs.
+- Removal or replacement records carry the complete notification UUID:
 
 ```text
 _removeDelivered: Removing [full-notification-UUID] from posting.bundle.id
 ```
 
-This full UUID is the AX group identifier. It is distinct from the abbreviated UUID and
-caller-supplied request ID in ordinary delivery logs; those are never used for attribution.
-The metadata stream can identify a replaced original that was captured through AX but never
-reached the retained database. It revises that same archive ID, preserves its text and observed
-time, and creates its first APNs outbox entry. Metadata arriving before AX is saved without
-creating a notification; a later banner supplies the content. Subsequent AX revisions retain
-the confirmed source, while a matching database occurrence can still correct it. Conflicting
-log sources for one full UUID remain unassigned until the database resolves them.
+The full UUID is the AX group identifier. Arrival candidates may immediately enter the APNs
+outbox, without waiting for removal or the next database snapshot. This deliberately trades
+certainty for latency: a prefix match is provisional, and an alert already handed to Apple
+cannot be recalled if later evidence disagrees. Full-UUID evidence confirms or corrects the
+same event; database metadata takes precedence over both. Attribution updates preserve the
+archive ID, text and observed date, while a database binding can supply its delivery date.
+
+If a prefix names multiple recent UUIDs or apps, the matcher withdraws emitted candidates.
+Pending/retry work is suppressed until stronger evidence arrives. The stored withdrawal also
+prevents a late candidate from reopening the push, including after a failed write is retried.
+Conflicting full-UUID sources remain unassigned until the database resolves them. Accepted
+pushes remain accepted through every correction. Metadata alone never creates message text.
 
 Requiring an identified source prevents a Sill alert mirrored back from an iPhone from triggering
 another Sill alert. Own Sill bundle IDs and configured/registered
@@ -132,9 +142,9 @@ late source correction cannot pass the source gate using a stale batch. An accep
 accepted across source corrections. Source icons use the existing cache or the exact bundle's
 Launch Services registration, including development apps outside the applications directories.
 
-The log message is private OS output, not a supported Apple notification API. Its absence,
-redaction or a changed format leaves the event unknown; no partial UUID or text match substitutes
-for it. The optional stream runs only while mirroring is enabled, stops its own child on shutdown,
+These log messages are private OS output, not a supported Apple notification API. Their absence,
+redaction or a changed format can leave the event unknown. The optional stream runs only while
+mirroring is enabled, stops its own child on shutdown,
 and reports failure after bounded retries. It does not read old logs on startup. An occurrence
 missed by both identity sources stays in the live inbox without a guaranteed background alert or
 source icon. Failed archive/source writes are retried every two seconds; a process exit during
@@ -343,6 +353,21 @@ screen sharing remained allowed, because hidden banners cannot supply AX content
 all 60 local check suites and the commit's CI passed. This run did not establish source-icon
 delivery, an actual iPhone fork inbox, or visible background/locked APNs presentation.
 
+### Arrival fast-path bridge acceptance
+
+A separate 2026-10-28 lifecycle run exercised the production arrival parser, matcher and history
+store while the previously authorized Mac app supplied AX events through its own archive. The
+seven observed AX UUIDs all received arrival attribution first, in **3.1–95.8 milliseconds** from
+their original AX observation time (median **63.9 ms**, including a 100 ms bridge poll). The
+replaced original was attributed in **63.9 ms**, preserving its ID, text and observed date. One
+other historical delivery was database-only and is outside this seven-event AX sample.
+
+All seven events entered an isolated fake-recipient outbox; no APNs provider was connected. There
+were no input/source write failures, and the owned log process stopped at exit. The new native
+Mac build and signature verification passed; native integrated acceptance is still pending its
+system authorization. This bridge timing is not a phone delivery measurement or a replacement
+for the preceding full-UUID recovery measurements.
+
 ## Validation boundaries
 
 ### Exact source recovery acceptance
@@ -396,11 +421,13 @@ The repository includes separate checks for the distinct parts of this feature:
   revisions and store resets. This does not open the person's notification database.
 - `Tests/checks/notification-banner/run.sh`: offline parsing of AX UUID and text fixtures; it
   does not observe a live Accessibility tree or establish live capture coverage.
-- `Tests/checks/notification-source/run.sh`: exact synthetic removal metadata, split pipe lines,
-  immediate short-line delivery while the child stays alive, and ordered delivery before EOF.
+- `Tests/checks/notification-source/run.sh`: verified synthetic arrival/removal metadata,
+  timestamp parsing, matching in either order, conflict withdrawal, cache expiry/reset, split
+  pipe lines, immediate short-line delivery, and ordered delivery before EOF.
 - `Tests/checks/notification-history/run.sh`: atomic baseline/archive writes and rollback, restart
   idempotence, exact UUID alias binding and ambiguity, equal-text deliveries, body revisions,
-  ordered replay, durable retry state, disabled/resume behavior, legacy JSON and offline APNs
+  evidence priority and migration, pending withdrawal retries, ordered replay, durable retry
+  state, disabled/resume behavior, legacy JSON and offline APNs
   response classification. Synthetic alias checks do not establish live integrated capture.
 
 Synthetic socket checks can verify per-viewer pause, all-viewer idle, media resume, bounded socket

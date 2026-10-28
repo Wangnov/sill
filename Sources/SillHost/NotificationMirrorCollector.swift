@@ -1,7 +1,7 @@
 import AppKit
 
-/// AX preserves live text, retained snapshots recover hidden banners, and usernoted's removal
-/// metadata identifies replaced banners that never reached the store. Joins use full UUIDs.
+/// AX preserves live text. Arrival metadata provides a short-window source match immediately;
+/// full-UUID removal metadata and retained snapshots confirm or correct that provisional source.
 @MainActor
 final class NotificationMirrorCollector {
     var onSnapshot: ((NotificationStoreSnapshot) -> Void)?
@@ -10,6 +10,10 @@ final class NotificationMirrorCollector {
     var onStatus: ((String) -> Void)?
     private let banners = NotificationBannerObserver()
     private let sources = NotificationSourceObserver()
+    private var arrivals = NotificationArrivalMatcher()
+    private var sourceQueue: [(source: NotificationSourceAttribution, epoch: Int)] = []
+    private var sourceTask: Task<Void, Never>?
+    private var sourceEpoch = 0
     private var task: Task<Void, Never>?
     private var bannerStatus = ""
     private var storeStatus = ""
@@ -22,7 +26,14 @@ final class NotificationMirrorCollector {
         generation += 1
         let current = generation
         storeStatus = String(localized: "Opening the Mac notification store…")
-        banners.onObservation = { [weak self] in self?.onBanner?($0) }
+        banners.onObservation = { [weak self] banner in
+            guard let self, self.generation == current else { return }
+            // Persist the text without waiting for attribution. Either the log or AX may arrive
+            // first; the matcher joins their metadata without comparing notification contents.
+            self.onBanner?(banner)
+            self.enqueueSources(self.arrivals.receiveBanner(uuid: banner.sourceUUID,
+                observedAt: banner.observedAt, now: Date().timeIntervalSince1970))
+        }
         banners.onStatus = { [weak self] status in
             guard let self else { return }
             switch status {
@@ -39,25 +50,26 @@ final class NotificationMirrorCollector {
             }
             self.publishStatus()
         }
-        sources.onSource = { [weak self] source in
+        sources.onSource = { [weak self] in self?.enqueueSources([$0]) }
+        sources.onArrival = { [weak self] arrival in
+            guard let self, self.generation == current else { return }
+            self.enqueueSources(self.arrivals.receiveArrival(arrival, now: Date().timeIntervalSince1970))
+        }
+        sources.onReset = { [weak self] in
             guard let self else { return }
-            Task { [weak self] in
-                // Launch Services also knows development apps outside /Applications. Resolve a
-                // name from an already identified bundle; never infer the bundle from body text.
-                let name = await Task.detached(priority: .utility) {
-                    Self.applicationName(bundleID: source.bundleID)
-                }.value
-                guard let self, self.generation == current else { return }
-                self.onSource?(source, name ?? self.appNames[source.bundleID] ?? source.bundleID)
-            }
+            self.arrivals.reset()
+            self.sourceEpoch += 1
+            // A restarted log stream must not join new arrivals to observations from a previous
+            // session. Complete full-UUID evidence already read before EOF remains useful.
+            self.sourceQueue.removeAll { $0.source.evidence == .arrival }
         }
         sources.onStatus = { [weak self] status in
             guard let self else { return }
             switch status {
             case .running:
-                self.sourceStatus = String(localized: "Source recovery for replaced notifications is connected.")
+                self.sourceStatus = String(localized: "Live notification source matching and recovery are connected.")
             case .unavailable:
-                self.sourceStatus = String(localized: "Source recovery is unavailable. Live banners and stored notifications still work.")
+                self.sourceStatus = String(localized: "Notification source matching is unavailable. Live banners and stored notifications still work.")
             case .stopped: self.sourceStatus = ""
             }
             self.publishStatus()
@@ -105,8 +117,38 @@ final class NotificationMirrorCollector {
         generation += 1
         banners.stop()
         sources.stop()
+        sourceTask?.cancel()
+        sourceTask = nil
+        sourceQueue.removeAll()
         task?.cancel()
         task = nil
+    }
+
+    private func enqueueSources(_ updates: [NotificationSourceAttribution]) {
+        sourceQueue.append(contentsOf: updates.map { ($0, sourceEpoch) })
+        guard !sourceQueue.isEmpty, sourceTask == nil else { return }
+        let current = generation
+        sourceTask = Task { [weak self] in
+            guard let self else { return }
+            // Resolve uncommon app names off-main, but preserve source-update order. Otherwise
+            // a slow name lookup could reapply an arrival match after its conflict was received.
+            while !self.sourceQueue.isEmpty {
+                let entry = self.sourceQueue.removeFirst()
+                let source = entry.source
+                var name = self.appNames[source.bundleID]
+                if name == nil && !source.bundleID.isEmpty {
+                    name = await Task.detached(priority: .utility) {
+                        Self.applicationName(bundleID: source.bundleID)
+                    }.value ?? source.bundleID
+                }
+                guard !Task.isCancelled, self.generation == current else { return }
+                guard source.evidence != .arrival || entry.epoch == self.sourceEpoch else { continue }
+                if !source.bundleID.isEmpty { self.appNames[source.bundleID] = name }
+                self.onSource?(source, name ?? "")
+                guard !Task.isCancelled, self.generation == current else { return }
+            }
+            self.sourceTask = nil
+        }
     }
 
     private func publishStatus() {

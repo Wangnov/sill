@@ -34,6 +34,136 @@ func snapshot(_ records: [NotificationStoreRecord]) -> NotificationStoreSnapshot
     NotificationStoreSnapshot(records: records, skippedRecordCount: 0)
 }
 
+func checkSourceEvidence(root: URL) throws {
+    func observation(_ uuid: String, body: String = "Evidence fixture body") -> NotificationBannerObservation {
+        NotificationBannerObservation(sourceUUID: uuid, title: "Evidence fixture title", subtitle: "",
+                                      body: body, observedAt: 1_500, displayAppName: nil)
+    }
+    func location(_ name: String) -> URL { root.appendingPathComponent("source-evidence-" + name + "/history.sqlite") }
+
+    // An arrival candidate can precede AX. Confirming that same attribution is an evidence
+    // upgrade, not a second occurrence or another alert to an already accepted recipient.
+    let sameURL = location("same-exact")
+    let same = try NotificationHistoryStore(url: sameURL)
+    let sameUUID = String(repeating: "16", count: 16)
+    check(try same.enrichBannerSource(uuid: sameUUID, bundleID: "test.candidate", appName: "Candidate App", evidence: .arrival,
+                                     fingerprints: ["pending", "accepted"]) == nil && same.events(after: 0).isEmpty &&
+          count(sameURL, "SELECT CAST(value AS INTEGER) FROM metadata WHERE key='sequence'") == 0,
+          "source-first arrival evidence stores metadata without inventing an event or sequence")
+    let candidate = try same.ingestBanner(observation(sameUUID), fingerprints: ["pending", "accepted"])!
+    check(try candidate.appBundleID == "test.candidate" && candidate.appName == "Candidate App" &&
+          same.duePushes(at: Date(), fingerprints: ["pending"]).count == 1, "arrival evidence can attribute and enqueue its later AX occurrence")
+    try same.finish(try same.duePushes(at: Date(), fingerprints: ["accepted"])[0], state: "accepted")
+    _ = try same.enrichBannerSource(uuid: sameUUID, bundleID: "test.candidate", appName: "Candidate App", evidence: .exact,
+                                   fingerprints: ["pending", "accepted"])
+    let confirmed = try same.events(after: 0)
+    check(confirmed.count == 1 && confirmed[0].id == candidate.id && confirmed[0].body == candidate.body && confirmed[0].date == candidate.date &&
+          count(sameURL, "SELECT count(*) FROM notification_source WHERE uuid='\(sameUUID)' AND evidence='exact'") == 1,
+          "same-source exact confirmation upgrades stored evidence while preserving one AX occurrence")
+    check(try same.duePushes(at: Date(), fingerprints: ["pending"]).count == 1 && same.duePushes(at: Date(), fingerprints: ["accepted"]).isEmpty,
+          "arrival to exact confirmation neither duplicates pending work nor rearms acceptance")
+    let confirmedSequence = confirmed[0].sequence
+    check(try same.enrichBannerSource(uuid: sameUUID, bundleID: "", appName: "", evidence: .ambiguous, fingerprints: ["new"]) == nil &&
+          same.enrichBannerSource(uuid: sameUUID, bundleID: "test.late-arrival", appName: "Late App", evidence: .arrival, fingerprints: ["new"]) == nil &&
+          same.events(after: 0).first?.sequence == confirmedSequence && same.duePushes(at: Date(), fingerprints: ["new"]).isEmpty,
+          "ambiguous or late arrival evidence cannot downgrade an exact source or add recipients")
+
+    // A stronger exact source may correct a different arrival candidate without creating
+    // an exact/exact conflict. A subsequent retained DB row remains authoritative over both.
+    let corrected = try NotificationHistoryStore(url: location("corrected"))
+    _ = try corrected.ingest(snapshot([]), fingerprints: [])
+    let correctedUUID = String(repeating: "27", count: 16)
+    _ = try corrected.enrichBannerSource(uuid: correctedUUID, bundleID: "test.guessed-arrival", appName: "Arrival App", evidence: .arrival, fingerprints: [])
+    let before = try corrected.ingestBanner(observation(correctedUUID), fingerprints: ["pending", "accepted"])!
+    let staleCandidate = try corrected.duePushes(at: Date(), fingerprints: ["pending"])[0]
+    try corrected.finish(try corrected.duePushes(at: Date(), fingerprints: ["accepted"])[0], state: "accepted")
+    let exact = try corrected.enrichBannerSource(uuid: correctedUUID, bundleID: "test.correct-exact", appName: "Exact App", evidence: .exact,
+                                                fingerprints: ["pending", "accepted"])!
+    check(exact.id == before.id && exact.sequence == 2 && exact.appBundleID == "test.correct-exact" && exact.appName == "Exact App" &&
+          exact.title == before.title && exact.body == before.body && exact.date == before.date,
+          "different-bundle exact evidence corrects arrival attribution under the same body, date and ID")
+    check(try !corrected.isCurrent(staleCandidate) && corrected.duePushes(at: Date(), fingerprints: ["accepted"]).isEmpty &&
+          corrected.duePushes(at: Date(), fingerprints: ["pending"]).first?.event.appBundleID == exact.appBundleID,
+          "source correction invalidates old pending attempts and preserves accepted delivery")
+    let dbSourceID = correctedUUID + ":" + String(TimeInterval(700).bitPattern, radix: 16)
+    let dbEvent = MirroredNotification(id: "notification-store:" + dbSourceID, appBundleID: "test.bound-database", appName: "Database App",
+                                       title: "Database title", body: "Authoritative DB body", date: 700)
+    let bound = try corrected.ingest(snapshot([NotificationStoreRecord(sourceID: dbSourceID, fingerprint: "bound", event: dbEvent)]), fingerprints: ["pending", "accepted"])[0]
+    check(try corrected.enrichBannerSource(uuid: correctedUUID, bundleID: "", appName: "", evidence: .ambiguous, fingerprints: ["new"]) == nil &&
+          corrected.enrichBannerSource(uuid: correctedUUID, bundleID: "test.untrusted-arrival", appName: "Untrusted", evidence: .arrival, fingerprints: ["new"]) == nil &&
+          corrected.events(after: 0) == [bound] && corrected.duePushes(at: Date(), fingerprints: ["new"]).isEmpty,
+          "ambiguous and arrival evidence cannot change a DB-bound event or its recipients")
+
+    // Both revocation of arrival evidence and an exact/exact conflict withdraw unsent alerts.
+    // Acceptance cannot be recalled, and an attempt captured before withdrawal is no longer current.
+    for reason in ["ambiguous", "exact-conflict"] {
+        let withdrawalURL = location(reason)
+        var withdrawal: NotificationHistoryStore? = try NotificationHistoryStore(url: withdrawalURL)
+        let withdrawalUUID = String(repeating: "38", count: 16)
+        _ = try withdrawal!.enrichBannerSource(uuid: withdrawalUUID, bundleID: "test.initial-source", appName: "Initial App",
+                                               evidence: reason == "ambiguous" ? .arrival : .exact, fingerprints: [])
+        let original = try withdrawal!.ingestBanner(observation(withdrawalUUID), fingerprints: ["pending", "accepted"])!
+        let stale = try withdrawal!.duePushes(at: Date(), fingerprints: ["pending"])[0]
+        try withdrawal!.finish(try withdrawal!.duePushes(at: Date(), fingerprints: ["accepted"])[0], state: "accepted")
+        let unknown = try withdrawal!.enrichBannerSource(uuid: withdrawalUUID,
+                                                        bundleID: reason == "ambiguous" ? "" : "test.conflicting-exact",
+                                                        appName: reason == "ambiguous" ? "" : "Conflicting App",
+                                                        evidence: reason == "ambiguous" ? .ambiguous : .exact,
+                                                        fingerprints: ["pending", "accepted", "new"])!
+        check(unknown.id == original.id && unknown.sequence == 2 && unknown.appBundleID.isEmpty && unknown.appName == "Mac" &&
+              unknown.body == original.body && unknown.date == original.date,
+              "source withdrawal preserves occurrence identity/content while clearing attribution (\(reason))")
+        check(try !withdrawal!.isCurrent(stale) && withdrawal!.duePushes(at: Date(), fingerprints: ["pending", "new"]).isEmpty &&
+              count(withdrawalURL, "SELECT count(*) FROM push_outbox WHERE fingerprint='pending' AND state='suppressed'") == 1 &&
+              count(withdrawalURL, "SELECT count(*) FROM push_outbox WHERE fingerprint='accepted' AND state='accepted'") == 1,
+              "source withdrawal suppresses unsent work, rejects stale attempts and retains acceptance (\(reason))")
+        try withdrawal!.retryFailures()
+        check(try withdrawal!.duePushes(at: Date(), fingerprints: ["pending"]).isEmpty, "provider retry cannot revive withdrawn source attribution (\(reason))")
+        withdrawal = nil
+        withdrawal = try NotificationHistoryStore(url: withdrawalURL)
+        check(try withdrawal!.enrichBannerSource(uuid: withdrawalUUID, bundleID: "test.initial-source", appName: "Initial App", evidence: .arrival,
+                                                 fingerprints: ["pending", "new"]) == nil,
+              "withdrawn evidence persists across restart and ignores a late arrival (\(reason))")
+        let laterAX = try withdrawal!.ingestBanner(observation(withdrawalUUID, body: "AX after source withdrawal"), fingerprints: ["pending", "new"])!
+        check(try laterAX.sequence == 3 && laterAX.appBundleID.isEmpty && withdrawal!.duePushes(at: Date(), fingerprints: ["pending", "new"]).isEmpty,
+              "later AX content remains unknown and suppressed after withdrawal (\(reason))")
+        if reason == "ambiguous" {
+            let repaired = try withdrawal!.enrichBannerSource(uuid: withdrawalUUID, bundleID: "test.repaired-exact", appName: "Repaired App", evidence: .exact,
+                                                              fingerprints: ["pending", "accepted", "new"])!
+            check(try repaired.id == original.id && repaired.sequence == 4 && repaired.appBundleID == "test.repaired-exact" &&
+                  withdrawal!.duePushes(at: Date(), fingerprints: ["pending", "new"]).count == 2 &&
+                  withdrawal!.duePushes(at: Date(), fingerprints: ["accepted"]).isEmpty,
+                  "exact evidence repairs ambiguous arrival, resumes eligible recipients and preserves acceptance")
+        }
+    }
+
+    // Reproduce the deployed three-column table before opening the new store. Existing rows,
+    // including NULL conflicts, carry exact evidence and must never be weakened by arrival data.
+    let legacyURL = location("legacy-schema")
+    try FileManager.default.createDirectory(at: legacyURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let legacyUUID = String(repeating: "49", count: 16)
+    let legacyConflictUUID = String(repeating: "5a", count: 16)
+    sql(legacyURL, """
+        CREATE TABLE notification_source(uuid TEXT PRIMARY KEY,bundle_id TEXT,app_name TEXT);
+        INSERT INTO notification_source VALUES('\(legacyUUID)','test.legacy-exact','Legacy Exact App');
+        INSERT INTO notification_source VALUES('\(legacyConflictUUID)',NULL,NULL);
+        """)
+    let legacy = try NotificationHistoryStore(url: legacyURL)
+    check(count(legacyURL, "SELECT count(*) FROM notification_source WHERE evidence='exact'") == 2,
+          "three-column source schema migrates every existing row, including NULL conflicts, to exact evidence")
+    for legacyID in [legacyUUID, legacyConflictUUID] {
+        check(try legacy.enrichBannerSource(uuid: legacyID, bundleID: "test.late-arrival", appName: "Late Arrival", evidence: .arrival, fingerprints: ["device"]) == nil &&
+              legacy.enrichBannerSource(uuid: legacyID, bundleID: "", appName: "", evidence: .ambiguous, fingerprints: ["device"]) == nil,
+              "migrated exact evidence ignores weaker arrival and ambiguity observations")
+    }
+    let legacyExact = try legacy.ingestBanner(observation(legacyUUID), fingerprints: ["device"])!
+    let legacyUnknown = try legacy.ingestBanner(observation(legacyConflictUUID), fingerprints: ["device"])!
+    check(try legacyExact.appBundleID == "test.legacy-exact" && legacyExact.appName == "Legacy Exact App" && legacyUnknown.appBundleID.isEmpty &&
+          legacy.duePushes(at: Date(), fingerprints: ["device"]).map { $0.event.id } == [legacyExact.id] &&
+          count(legacyURL, "SELECT count(*) FROM notification_source WHERE uuid='\(legacyConflictUUID)' AND bundle_id IS NULL AND evidence='exact'") == 1,
+          "migrated exact attribution stays usable while its legacy conflict remains unknown and cannot alert")
+}
+
 func checkBannerSourceHistory(root: URL) throws {
     func observation(_ uuid: String, body: String = "AX original body", observedAt: TimeInterval = 1_234) -> NotificationBannerObservation {
         NotificationBannerObservation(sourceUUID: uuid, title: "AX title", subtitle: "AX subtitle",
@@ -335,6 +465,55 @@ func checkBannerHistory(root: URL) throws {
 }
 
 @MainActor
+func checkMirrorPendingWithdrawal(root: URL) async throws {
+    let suite = "sill.pending-withdrawal-check." + UUID().uuidString
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let historyURL = root.appendingPathComponent("mirror-pending-withdrawal/history.sqlite")
+    let mirror = NotificationMirror(defaults: defaults, historyURL: historyURL)
+    defer { mirror.stop() }
+    let collector = NotificationMirrorCollector.latest!
+    var commits = 0
+    mirror.enabled = true
+    mirror.start(macID: "withdrawal-mac", isPaired: { _ in true }, onHistoryAvailable: { commits += 1 })
+    let peer = Data([4, 5, 6])
+    check(mirror.subscribe(NotificationSubscription(enabled: true, pushToken: "0304", topic: "test.ios.apns",
+                                                   environment: "sandbox"), fingerprint: peer),
+          "withdrawal fixture registers a recipient without starting an APNs provider")
+    let uuid = String(repeating: "b7", count: 16)
+    let arrival = NotificationSourceAttribution(uuid: uuid, bundleID: "test.arrival.fixture", evidence: .arrival)
+    collector.onSource?(arrival, "Arrival Fixture")
+    collector.onBanner?(NotificationBannerObservation(sourceUUID: uuid, title: "Withdrawal fixture", subtitle: "",
+                                                      body: "Synthetic candidate body", observedAt: 1_750, displayAppName: nil))
+    let ledger = try NotificationHistoryStore(url: historyURL)
+    let stale = try ledger.duePushes(at: Date(), fingerprints: [peer.base64EncodedString()])[0]
+    check(stale.event.sequence == 1 && stale.event.appBundleID == arrival.bundleID, "candidate starts as one pending occurrence")
+    sql(historyURL, """
+        CREATE TRIGGER fail_pending_withdrawal BEFORE INSERT ON notification_source
+        WHEN NEW.uuid='\(uuid)' AND NEW.evidence='ambiguous' BEGIN SELECT RAISE(ABORT,'fixture'); END
+        """)
+    let before = commits
+    collector.onSource?(NotificationSourceAttribution(uuid: uuid, bundleID: "", evidence: .ambiguous), "")
+    check(try commits == before && ledger.isCurrent(stale) &&
+          count(historyURL, "SELECT count(*) FROM notification_source WHERE uuid='\(uuid)' AND evidence='arrival'") == 1,
+          "first ambiguous write fails atomically and remains queued in the mirror")
+    // The same candidate, rather than another bundle, makes this catch a lost withdrawal:
+    // replacing the pending ambiguous entry would otherwise succeed as an unchanged arrival.
+    collector.onSource?(arrival, "Arrival Fixture")
+    sql(historyURL, "DROP TRIGGER fail_pending_withdrawal")
+    let deadline = Date().addingTimeInterval(3)
+    while commits == before && Date() < deadline { try await Task.sleep(for: .milliseconds(50)) }
+    let events = try ledger.events(after: 0)
+    check(commits == before + 1 && events.count == 1 && events[0].id == stale.event.id && events[0].sequence == 2 &&
+          events[0].appBundleID.isEmpty && events[0].body == stale.event.body && events[0].date == stale.event.date,
+          "pending ambiguous withdrawal survives late arrival and retries under the original ID/content")
+    check(try !ledger.isCurrent(stale) && ledger.duePushes(at: Date(), fingerprints: [peer.base64EncodedString()]).isEmpty &&
+          count(historyURL, "SELECT count(*) FROM notification_source WHERE uuid='\(uuid)' AND evidence='ambiguous'") == 1 &&
+          count(historyURL, "SELECT count(*) FROM push_outbox WHERE state='suppressed'") == 1,
+          "retried withdrawal stores ambiguous evidence and suppresses its unsent outbox occurrence")
+}
+
+@MainActor
 func checkMirrorBannerRetry(root: URL) async throws {
     let suite = "sill.banner-retry-check." + UUID().uuidString
     let defaults = UserDefaults(suiteName: suite)!
@@ -485,6 +664,7 @@ for (status, reason) in [(400, "DeviceTokenNotForTopic"), (403, "InvalidProvider
 }
 try checkBannerHistory(root: root)
 try checkBannerSourceHistory(root: root)
+try checkSourceEvidence(root: root)
 Task { @MainActor in
     do {
         let suite = "sill.notification-history-check." + UUID().uuidString
@@ -510,7 +690,8 @@ Task { @MainActor in
         check(try reloaded.replay(after: 0).map(\.id) == ["first-live", "second-live"], "stop/restart retains recoverable history")
         reloaded.stop()
         try await checkMirrorBannerRetry(root: root)
-        print("notification-history: atomic baseline/archive, AX/DB alias merge, exact source attribution, mirror write retry/source-gated outbox, reload/idempotence, UUID reuse/ambiguity, revisions, ordered replay, durable outbox, disabled privacy/resume and APNs classification passed (offline)")
+        try await checkMirrorPendingWithdrawal(root: root)
+        print("notification-history: atomic baseline/archive, AX/DB aliases, evidence priority/migration, pending withdrawal retry, source-gated outbox, ordered replay and APNs classification passed (offline)")
         try? FileManager.default.removeItem(at: root)
         exit(0)
     } catch {

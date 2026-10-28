@@ -59,13 +59,19 @@ final class NotificationHistoryStore {
                 CREATE TABLE IF NOT EXISTS source_seen (source_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, event_id TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS archive (event_id TEXT PRIMARY KEY, sequence INTEGER NOT NULL UNIQUE, event BLOB NOT NULL);
                 CREATE TABLE IF NOT EXISTS notification_alias (uuid TEXT PRIMARY KEY, event_id TEXT NOT NULL, source_id TEXT);
-                CREATE TABLE IF NOT EXISTS notification_source (uuid TEXT PRIMARY KEY, bundle_id TEXT, app_name TEXT);
+                CREATE TABLE IF NOT EXISTS notification_source (uuid TEXT PRIMARY KEY, bundle_id TEXT, app_name TEXT,
+                    evidence TEXT NOT NULL DEFAULT 'exact');
                 CREATE TABLE IF NOT EXISTS push_outbox (
                     fingerprint TEXT NOT NULL, event_id TEXT NOT NULL, sequence INTEGER NOT NULL,
                     state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, next_attempt REAL NOT NULL DEFAULT 0,
                     problem TEXT, PRIMARY KEY(fingerprint, event_id), FOREIGN KEY(event_id) REFERENCES archive(event_id));
                 CREATE INDEX IF NOT EXISTS push_due ON push_outbox(state, next_attempt);
                 """)
+            if try !sourceHasEvidenceColumn() {
+                // Every pre-evidence mapping came from the full-UUID exact path. Preserve that
+                // authority, including its durable NULL conflict, rather than downgrading it.
+                try execute("ALTER TABLE notification_source ADD COLUMN evidence TEXT NOT NULL DEFAULT 'exact'")
+            }
             try execute("INSERT OR IGNORE INTO metadata(key,value) VALUES('history_id', ?)", [.text(UUID().uuidString)])
             try execute("INSERT OR IGNORE INTO metadata(key,value) VALUES('sequence', '0')")
             historyID = try scalarText("SELECT value FROM metadata WHERE key='history_id'")!
@@ -165,37 +171,60 @@ final class NotificationHistoryStore {
         }
     }
 
-    /// A source observation contains no message body. Save its exact UUID mapping even when AX
-    /// has not arrived, but only enrich an existing banner event. Never bind source_id here:
-    /// a later database record remains authoritative for source, content and delivery time.
+    /// A source observation contains no message body. Save its UUID mapping even before AX,
+    /// but only enrich an existing banner. Arrival candidates are provisional; exact evidence
+    /// can confirm/correct them. Never bind source_id here: the database stays authoritative.
     func enrichBannerSource(uuid: String, bundleID: String, appName: String,
+                            evidence: NotificationSourceEvidence = .exact,
                             fingerprints: [String]) throws -> MirroredNotification? {
-        guard !bundleID.isEmpty else { return nil }
+        guard evidence == .ambiguous || !bundleID.isEmpty else { return nil }
         return try transaction {
+            let alias = try notificationAlias(uuid: uuid)
+            guard alias?.sourceID == nil else { return nil } // No log evidence can replace DB metadata.
             let previous = try bannerSource(uuid: uuid)
-            let conflicted = previous != nil && (previous?.bundleID == nil || previous?.bundleID != bundleID)
             let name = appName.isEmpty ? bundleID : appName
-            if conflicted {
-                // NULL marks a durable conflict, not a missing observation. Do not choose one
-                // of two bundles for the same UUID or trust a later repetition of either log.
-                try execute("UPDATE notification_source SET bundle_id=NULL,app_name=NULL WHERE uuid=?", [.text(uuid)])
-            } else {
-                try execute("""
-                    INSERT INTO notification_source(uuid,bundle_id,app_name) VALUES(?,?,?)
-                    ON CONFLICT(uuid) DO UPDATE SET app_name=excluded.app_name
-                    """, [.text(uuid), .text(bundleID), .text(name)])
+            let next: BannerSource
+            switch evidence {
+            case .arrival:
+                guard previous == nil || previous?.evidence == .arrival else { return nil }
+                if let previous, previous.bundleID != bundleID {
+                    next = BannerSource(bundleID: nil, appName: nil, evidence: .ambiguous)
+                } else {
+                    next = BannerSource(bundleID: bundleID, appName: name, evidence: .arrival)
+                }
+            case .ambiguous:
+                guard previous == nil || previous?.evidence == .arrival else { return nil }
+                // Persist the withdrawal so a delayed candidate cannot reopen its pending push.
+                next = BannerSource(bundleID: nil, appName: nil, evidence: .ambiguous)
+            case .exact:
+                if let previous, previous.evidence == .exact,
+                   previous.bundleID == nil || previous.bundleID != bundleID {
+                    // Two conflicting exact mappings remain unknown until DB evidence arrives.
+                    next = BannerSource(bundleID: nil, appName: nil, evidence: .exact)
+                } else {
+                    next = BannerSource(bundleID: bundleID, appName: name, evidence: .exact)
+                }
             }
-            guard let alias = try notificationAlias(uuid: uuid), alias.sourceID == nil,
+            try execute("""
+                INSERT INTO notification_source(uuid,bundle_id,app_name,evidence) VALUES(?,?,?,?)
+                ON CONFLICT(uuid) DO UPDATE SET bundle_id=excluded.bundle_id,app_name=excluded.app_name,evidence=excluded.evidence
+                """, [.text(uuid), next.bundleID.map(Value.text) ?? .null,
+                      next.appName.map(Value.text) ?? .null, .text(next.evidence.rawValue)])
+            guard let alias,
                   var existing = try archivedEvent(id: alias.eventID) else { return nil }
-            if conflicted {
+            if next.bundleID == nil {
+                try execute("""
+                    UPDATE push_outbox SET state='suppressed',next_attempt=0,problem='Unconfirmed notification source'
+                    WHERE event_id=? AND state IN ('pending','retry')
+                    """, [.text(existing.id)])
                 guard !existing.appBundleID.isEmpty else { return nil }
                 existing.appBundleID = ""
                 existing.appName = "Mac"
                 return try archive(existing, fingerprints: [])
             }
-            guard existing.appBundleID != bundleID || existing.appName != name else { return nil }
-            existing.appBundleID = bundleID
-            existing.appName = name
+            guard existing.appBundleID != next.bundleID || existing.appName != next.appName else { return nil }
+            existing.appBundleID = next.bundleID ?? ""
+            existing.appName = next.appName ?? "Mac"
             return try archive(existing, fingerprints: fingerprints)
         }
     }
@@ -314,14 +343,23 @@ final class NotificationHistoryStore {
     private struct BannerSource {
         let bundleID: String?
         let appName: String?
+        let evidence: NotificationSourceEvidence
     }
 
     private func bannerSource(uuid: String) throws -> BannerSource? {
-        let statement = try prepare("SELECT bundle_id,app_name FROM notification_source WHERE uuid=?", [.text(uuid)])
+        let statement = try prepare("SELECT bundle_id,app_name,evidence FROM notification_source WHERE uuid=?", [.text(uuid)])
         defer { sqlite3_finalize(statement) }
         guard try step(statement) else { return nil }
+        guard let evidence = NotificationSourceEvidence(rawValue: text(statement, 2)) else { throw StoreError.invalidEvent }
         return BannerSource(bundleID: sqlite3_column_type(statement, 0) == SQLITE_NULL ? nil : text(statement, 0),
-                            appName: sqlite3_column_type(statement, 1) == SQLITE_NULL ? nil : text(statement, 1))
+                            appName: sqlite3_column_type(statement, 1) == SQLITE_NULL ? nil : text(statement, 1), evidence: evidence)
+    }
+
+    private func sourceHasEvidenceColumn() throws -> Bool {
+        let statement = try prepare("PRAGMA table_info(notification_source)", [])
+        defer { sqlite3_finalize(statement) }
+        while try step(statement) { if text(statement, 1) == "evidence" { return true } }
+        return false
     }
 
     private func notificationAlias(uuid: String) throws -> NotificationAlias? {
