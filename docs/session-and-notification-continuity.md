@@ -363,10 +363,29 @@ replaced original was attributed in **63.9 ms**, preserving its ID, text and obs
 other historical delivery was database-only and is outside this seven-event AX sample.
 
 All seven events entered an isolated fake-recipient outbox; no APNs provider was connected. There
-were no input/source write failures, and the owned log process stopped at exit. The new native
-Mac build and signature verification passed; native integrated acceptance is still pending its
-system authorization. This bridge timing is not a phone delivery measurement or a replacement
-for the preceding full-UUID recovery measurements.
+were no input/source write failures, and the owned log process stopped at exit. This bridge timing
+is not a phone delivery measurement or a replacement for the preceding full-UUID measurements.
+
+The frozen native `ac233d5` build then passed a separate lifecycle run with all three collection
+channels active. Public sender snapshots and the final archive matched **8/8 historical content
+states**, including identical-body deliveries, replacement, grouped and body-only notifications.
+All seven AX events received arrival attribution; AX-observation-to-first-attributed-sample
+upper bounds were **3.814–25.490 ms**, median **17.253 ms**, including a 20 ms polling interval
+plus read/scheduling overhead. The replaced original was attributed by **19.391 ms** and later
+confirmed by the full-UUID log, with its ID, title, subtitle, body and date unchanged.
+
+The other identical-body delivery was not observed by AX. It was recovered from the database
+**11.638 seconds after public delivery**; this remains a slower fallback and is not included in
+the fast-path timings. There were no final unknown sources, source conflicts, busy polls or read
+errors. Native APNs was off, so this establishes local capture and attribution, not phone alert
+delivery. The seven fake-recipient queue writes above and offline accepted-push checks cover
+enqueue/dedup behavior separately.
+
+All 61 local check suites and [CI run 40651779651](https://github.com/Wangnov/sill/actions/runs/40651779651)
+passed; the optional mutation job was skipped. The synthetic notifications/archive rows were
+removed and their sender permission restored off. The 29 other archive records were unchanged
+across cleanup; the original phone pair remains. The authorized frozen app was left running with
+screen capture, Accessibility and notification-store access working.
 
 ## Validation boundaries
 
