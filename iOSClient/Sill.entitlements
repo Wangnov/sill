@@ -5,5 +5,11 @@
     <!-- The personal fork must use its owner's Push Notifications App ID and profile. -->
     <key>aps-environment</key>
     <string>$(SILL_APNS_ENTITLEMENT)</string>
+    <key>com.apple.developer.usernotifications.communication</key>
+    <true/>
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>$(SILL_NOTIFICATION_APP_GROUP)</string>
+    </array>
 </dict>
 </plist>

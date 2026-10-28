@@ -57,7 +57,7 @@ struct NotificationInboxView: View {
                         Text(problem).font(.footnote).foregroundStyle(.secondary)
                     }
                 } footer: {
-                    Text("Notifications are displayed by Sill. The source app’s icon appears in this inbox; it cannot replace Sill’s icon in system notifications.")
+                    Text("Notifications are delivered by Sill. When a source app’s icon has been received from your paired Mac, system alerts can show it with a small Sill badge. Otherwise they use Sill’s icon.")
                 }
                 if inbox.entries.isEmpty {
                     Section {

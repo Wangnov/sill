@@ -2168,28 +2168,6 @@
         }
       }
     },
-    "Notifications are displayed by Sill. The source app’s icon appears in this inbox; it cannot replace Sill’s icon in system notifications.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Notifications are displayed by Sill. The source app’s icon appears in this inbox; it cannot replace Sill’s icon in system notifications."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "通知由 Sill 显示。来源 App 的图标会显示在此收件箱中，但无法替代系统通知中的 Sill 图标。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "通知由 Sill 顯示。來源 App 的圖示會顯示在此收件匣中，但無法取代系統通知中的 Sill 圖示。"
-          }
-        }
-      }
-    },
     "On the virtual display": {},
     "On your Mac, choose Pair iPhone or iPad… in the Sill menu, then point this %@ at the code.": {
       "comment": "The quoted pairing command should match the Mac app menu. The argument is iPhone or iPad.",
@@ -4000,6 +3978,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "你的 Mac"
+          }
+        }
+      }
+    },
+    "Notifications are delivered by Sill. When a source app’s icon has been received from your paired Mac, system alerts can show it with a small Sill badge. Otherwise they use Sill’s icon.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notifications are delivered by Sill. When a source app’s icon has been received from your paired Mac, system alerts can show it with a small Sill badge. Otherwise they use Sill’s icon."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知由 Sill 转发。从已配对的 Mac 同步来源 App 图标后，系统通知可显示该图标，并带有小号 Sill 角标；尚未同步图标时显示 Sill 图标。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知由 Sill 轉發。從已配對的 Mac 同步來源 App 圖示後，系統通知可顯示該圖示，並帶有小型 Sill 角標；尚未同步圖示時顯示 Sill 圖示。"
           }
         }
       }

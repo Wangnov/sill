@@ -69,7 +69,33 @@
 		B4B903B2E1406FFDDA3DEFA6 /* NotificationInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6416A92AD3B0C47DAC54C37 /* NotificationInbox.swift */; };
 		53DC718A6CE21E6409F1E35B /* NotificationInboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 323A4CB635E5C7D74E45989E /* NotificationInboxView.swift */; };
 		1B391627F83EED994FB774F5 /* StreamClient+Notifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1369CD33C82372F9C53328D2 /* StreamClient+Notifications.swift */; };
+		C10000010000000000000001 /* NotificationIconCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000010000000000000011 /* NotificationIconCache.swift */; };
+		C10000010000000000000002 /* NotificationIconCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000010000000000000011 /* NotificationIconCache.swift */; };
+		C10000010000000000000003 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000010000000000000012 /* NotificationService.swift */; };
+		C10000010000000000000004 /* SillNotificationService.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = C10000010000000000000013 /* SillNotificationService.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		C10000010000000000000021 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000010000000000008001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C10000010000000000000031;
+			remoteInfo = SillNotificationService;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		C10000010000000000000022 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (C10000010000000000000004 /* SillNotificationService.appex in Embed App Extensions */, );
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		B10000010000000000000002 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
@@ -136,6 +162,11 @@
 		D6416A92AD3B0C47DAC54C37 /* NotificationInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NotificationInbox.swift"; sourceTree = "<group>"; };
 		323A4CB635E5C7D74E45989E /* NotificationInboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NotificationInboxView.swift"; sourceTree = "<group>"; };
 		1369CD33C82372F9C53328D2 /* StreamClient+Notifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+Notifications.swift"; sourceTree = "<group>"; };
+		C10000010000000000000011 /* NotificationIconCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationShared/NotificationIconCache.swift; sourceTree = "<group>"; };
+		C10000010000000000000012 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService/NotificationService.swift; sourceTree = "<group>"; };
+		C10000010000000000000013 /* SillNotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SillNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		C10000010000000000000014 /* Notification Service Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = "Notification Service Info.plist"; path = NotificationService/Info.plist; sourceTree = "<group>"; };
+		C10000010000000000000015 /* SillNotificationService.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NotificationService/SillNotificationService.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -147,12 +178,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C10000010000000000000023 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		A1000001000000000000C001 = {
 			isa = PBXGroup;
 			children = (
+				C10000010000000000000011 /* NotificationIconCache.swift */,
+				C10000010000000000000012 /* NotificationService.swift */,
+				C10000010000000000000014 /* Notification Service Info.plist */,
+				C10000010000000000000015 /* SillNotificationService.entitlements */,
 				A1000001000000000000F001 /* SillApp.swift */,
 				A1000001000000000000F002 /* ContentView.swift */,
 				A1000001000000000000F201 /* SillLinks.swift */,
@@ -232,6 +273,7 @@
 			isa = PBXGroup;
 			children = (
 				A1000001000000000000F007 /* Sill.app */,
+				C10000010000000000000013 /* SillNotificationService.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -246,10 +288,12 @@
 				A1000001000000000000B001 /* Sources */,
 				A1000001000000000000B002 /* Frameworks */,
 				A1000001000000000000B003 /* Resources */,
+				C10000010000000000000022 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				C10000010000000000000024 /* PBXTargetDependency */,
 			);
 			name = Sill;
 			packageProductDependencies = (
@@ -258,6 +302,20 @@
 			productName = Sill;
 			productReference = A1000001000000000000F007 /* Sill.app */;
 			productType = "com.apple.product-type.application";
+		};
+		C10000010000000000000031 /* SillNotificationService */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C10000010000000000000032 /* Build configuration list for PBXNativeTarget "SillNotificationService" */;
+			buildPhases = (
+				C10000010000000000000033 /* Sources */,
+				C10000010000000000000023 /* Frameworks */,
+			);
+			buildRules = ();
+			dependencies = ();
+			name = SillNotificationService;
+			productName = SillNotificationService;
+			productReference = C10000010000000000000013 /* SillNotificationService.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -269,6 +327,9 @@
 				LastSwiftUpdateCheck = 1500;
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
+					C10000010000000000000031 = {
+						CreatedOnToolsVersion = 15.0;
+					};
 					A1000001000000000000E001 = {
 						CreatedOnToolsVersion = 15.0;
 					};
@@ -293,6 +354,7 @@
 			projectRoot = "";
 			targets = (
 				A1000001000000000000E001 /* Sill */,
+				C10000010000000000000031 /* SillNotificationService */,
 			);
 		};
 /* End PBXProject section */
@@ -316,6 +378,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C10000010000000000000001 /* NotificationIconCache.swift in Sources */,
 				A1000001000000000000A001 /* SillApp.swift in Sources */,
 				A1000001000000000000A002 /* ContentView.swift in Sources */,
 				A1000001000000000000A201 /* SillLinks.swift in Sources */,
@@ -376,7 +439,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C10000010000000000000033 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C10000010000000000000003 /* NotificationService.swift in Sources */,
+				C10000010000000000000002 /* NotificationIconCache.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		C10000010000000000000024 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C10000010000000000000031 /* SillNotificationService */;
+			targetProxy = C10000010000000000000021 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		A10000010000000000009101 /* Debug */ = {
@@ -437,6 +517,8 @@
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
+				SILL_IOS_BUNDLE_ID = local.sill.fork.ios.debug;
+				SILL_NOTIFICATION_APP_GROUP = "group.$(SILL_IOS_BUNDLE_ID)";
 				SDKROOT = iphoneos;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
@@ -497,6 +579,8 @@
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SILL_IOS_BUNDLE_ID = local.sill.fork.ios;
+				SILL_NOTIFICATION_APP_GROUP = "group.$(SILL_IOS_BUNDLE_ID)";
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
 			};
@@ -528,7 +612,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.5.1;
-				PRODUCT_BUNDLE_IDENTIFIER = local.sill.fork.ios.debug;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SILL_IOS_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = minimal;
@@ -563,10 +647,48 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.5.1;
-				PRODUCT_BUNDLE_IDENTIFIER = local.sill.fork.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SILL_IOS_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = minimal;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		C10000010000000000000041 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = NotificationService/SillNotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NotificationService/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", );
+				MARKETING_VERSION = 0.5.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SILL_IOS_BUNDLE_ID).NotificationService";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		C10000010000000000000042 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = NotificationService/SillNotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NotificationService/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", );
+				MARKETING_VERSION = 0.5.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SILL_IOS_BUNDLE_ID).NotificationService";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -590,6 +712,12 @@
 				A10000010000000000009301 /* Debug */,
 				A10000010000000000009302 /* Release */,
 			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C10000010000000000000032 /* Build configuration list for PBXNativeTarget "SillNotificationService" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (C10000010000000000000041 /* Debug */, C10000010000000000000042 /* Release */, );
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};

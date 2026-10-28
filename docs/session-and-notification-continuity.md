@@ -182,9 +182,18 @@ replay. APNs import never advances that cursor: receiving push sequence 20 does 
 that sequences 1–19 were synchronized. A later complete TLS event upgrades an APNs summary
 without resetting its read state. Explicit **Clear History** retains the synchronization
 checkpoint so reconnect does not restore the entries the person deliberately cleared. Forgetting
-a Mac removes that Mac's local inbox and checkpoint. Available source app icons are cached across
-launches; unknown icons use a placeholder. System alerts remain attributed to Sill with Sill's
-icon; this implementation does not use Communication Notifications to impersonate another app.
+a Mac removes that Mac's local inbox, checkpoint and cached source icons; **Clear History** keeps
+the icon catalog. A paired TLS session synchronizes available source-app icons into an App Group
+cache shared with the notification service extension. In the inbox, unknown icons use a placeholder.
+
+For a background APNs alert with a cached source icon, the extension uses Apple's Communication
+Notifications style: the source icon appears as the avatar and iOS retains a small Sill badge.
+The alert remains Sill's notification, not a replacement of the system app identity. If the icon
+has not yet synchronized or enrichment fails, the extension returns the original Sill alert. Once
+cached, the icon does not require an active picture or TLS connection when a push arrives; the
+Mac must still be running and online. Communication styling folds a nonempty subtitle into the
+displayed body because that style hides the subtitle row; the event in `userInfo` retains its
+original separate fields. Focus, preview and notification settings control system presentation.
 
 TLS subscriptions and APNs registration are accepted only for authenticated, currently paired
 peers. A JSON device ID is not an identity. TLS history does not require a push token or APNs
@@ -237,9 +246,10 @@ is marked **accepted**, not “displayed”; a text revision of that same delive
 accepted alert. TLS history recovery remains independent of APNs acceptance and retries.
 
 An APNs alert removed from iOS Notification Center before Sill imports it can still be recovered
-from the Mac's archive on the next paired TLS synchronization, if Sill captured it. A service
-extension, encrypted payload relay and source-app actions are separate work. No relay/helper
-service or per-event client acknowledgment has been introduced.
+from the Mac's archive on the next paired TLS synchronization, if Sill captured it. The service
+extension enriches alerts using the local icon cache; encrypted payload relay and source-app
+actions are separate work. No relay/helper service or per-event client acknowledgment has been
+introduced.
 
 ## Permission guidance
 
@@ -455,12 +465,13 @@ inspection of this Mac's retained store establish different facts. The app's own
 permission was exercised in the native run above; the capture-to-phone path must still be
 validated using the actual signed builds.
 
-As of this implementation, no valid user-signed fork has completed real-device lifecycle,
-notification capture-to-inbox, or foreground/background/locked APNs presentation acceptance.
-Valid fork signing/provisioning and APNs credentials remain required for that work. Apple
-acceptance is not proof of device display, and the system-store retention/schema limits above
-remain even after those tests pass. Record device lifecycle, real capture and visible APNs
-arrival independently; do not promote a test-button event or a simulator build into that result.
+On 2026-10-28, the signed iPhone showed a cached Claude source icon as the communication avatar
+with a small Sill badge for a marked APNs fixture. A nonempty subtitle remained visible in the
+displayed body. After the fixed-signature Mac's permissions were restored and desktop streaming
+resumed, newly captured ChatGPT notifications also displayed their source avatars. These icon
+observations are separate from lifecycle recovery, notification-tap and locked-presentation
+acceptance. Apple accepting a push is not proof of device display; record those results separately.
+The system-store retention/schema limits above remain even after device tests pass.
 
 Platform references: [iOS background limits](https://developer.apple.com/forums/thread/685525),
 [APNs server setup](https://developer.apple.com/documentation/usernotifications/setting-up-a-remote-notification-server),

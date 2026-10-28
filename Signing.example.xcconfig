@@ -1,5 +1,6 @@
 // Copy to Signing.local.xcconfig and replace YOUR_TEAM_ID with your Apple Developer Team ID.
-// The local file is ignored by Git. Keep the project's bundle ID to retain its pairing namespace.
+// The local file is ignored by Git. Override the iOS base ID for your own App IDs and App Group.
+// SILL_IOS_BUNDLE_ID = com.example.sill.ios
 DEVELOPMENT_TEAM = YOUR_TEAM_ID
 CODE_SIGN_STYLE = Automatic
 CODE_SIGN_IDENTITY = Apple Development

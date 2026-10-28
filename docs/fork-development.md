@@ -57,7 +57,7 @@ extraction from package sources remains the explicit localization sync step.
 `feat/i18n` contains the upstream-compatible localization contribution. The fork's main
 branch also carries the app project and data-ownership refactors; use `upstream/main` as the
 comparison base when preparing further contributions. The iOS app still needs your own team
-and bundle identifier in Signing & Capabilities for an actual device build.
+and bundle identifier for an actual device build.
 
 Notification collection reads macOS's retained notification database and requires **Full Disk
 Access for Sill itself** in System Settings → Privacy & Security → Full Disk Access. This is
@@ -78,9 +78,14 @@ APNs outbox and inbox-clearing behavior are documented in
 [session and notification continuity](session-and-notification-continuity.md). The fork's iOS
 targets use separate Debug/Release bundle IDs and have no upstream development team. Their push
 entitlement requires your own matching App ID and provisioning profile; keep the provider's
-`.p8` outside the app and repository.
+`.p8` outside the app and repository. Set `SILL_IOS_BUNDLE_ID` in the local signing configuration
+to your iOS app ID and pass the file with `xcodebuild -xcconfig Signing.local.xcconfig` when
+building iOS from the command line. The embedded notification service uses the `.NotificationService` suffix,
+and both targets share `group.<SILL_IOS_BUNDLE_ID>`. Enable App Groups for both App IDs and
+provision them for your team; the main app also needs Push Notifications and Communication Notifications.
 
-Builds and offline checks are not device acceptance. Lifecycle recovery on the user's signed
-iOS fork and visible APNs alerts while backgrounded or locked have not yet been accepted on a
-real device. Record those results separately from compilation, local history tests and Apple's
-acceptance of an APNs request.
+Builds and offline checks are not device acceptance. On a signed iPhone, marked APNs fixtures
+showed a cached source icon with a small Sill badge, and a nonempty subtitle remained visible.
+Newly captured Mac notifications also displayed their source avatars after the host resumed.
+Verify lifecycle recovery, notification taps and locked presentation separately from these
+observations, compilation, local history tests and Apple's acceptance of an APNs request.

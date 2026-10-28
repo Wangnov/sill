@@ -258,7 +258,14 @@ package actor APNsProvider {
     private struct APS: Encodable {
         let alert: Alert
         let threadID: String
-        enum CodingKeys: String, CodingKey { case alert; case threadID = "thread-id" }
+        // Let the iPhone's service extension add a cached source icon before presentation.
+        // Older clients still display the original alert when no extension is installed.
+        let mutableContent = 1
+        enum CodingKeys: String, CodingKey {
+            case alert
+            case threadID = "thread-id"
+            case mutableContent = "mutable-content"
+        }
     }
     private struct Alert: Encodable { let title: String; let subtitle: String?; let body: String }
     private struct Sill: Encodable { let macID: String; let event: MirroredNotification }

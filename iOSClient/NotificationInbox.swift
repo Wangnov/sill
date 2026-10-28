@@ -56,6 +56,7 @@ final class NotificationInbox: NSObject, ObservableObject, UNUserNotificationCen
     private let defaults: UserDefaults
     private let center: UNUserNotificationCenter
     private let historyURL: URL?
+    private let sharedIconCache = NotificationIconCache()
     /// The pending cursor belongs to the in-memory entries. Only the cursor from a successful
     /// atomic save may be sent on reconnect; an interrupted/failed save must replay that batch.
     private var cursors: [String: HistoryCursor] = [:]
@@ -267,9 +268,13 @@ final class NotificationInbox: NSObject, ObservableObject, UNUserNotificationCen
     }
 
     func cacheIcon(_ image: UIImage, bundleID: String, macID: String) {
-        guard !bundleID.isEmpty else { return }
+        guard !bundleID.isEmpty, let store = savedMacStore,
+              store.snapshot.macs.contains(where: { $0.macID == macID }) else { return }
         let key = macID + ":" + bundleID
         icons[key] = image
+        // Every icon in a paired session's catalog prewarms the extension, including apps
+        // which have not sent a notification yet. A future push can arrive while Sill is away.
+        persistSharedIcon(image, bundleID: bundleID, macID: macID)
         if entries.contains(where: { iconKey(for: $0) == key }) { persistIcon(image, key: key) }
     }
 
@@ -318,6 +323,7 @@ final class NotificationInbox: NSObject, ObservableObject, UNUserNotificationCen
             savedCursors = savedCursors.filter { kept.contains($0.key) }
             persistNow()
         }
+        if !store.savedMacsSeeded { sharedIconCache?.retainMacs(kept) }
         syncSavedIcons()
     }
 
@@ -379,9 +385,13 @@ final class NotificationInbox: NSObject, ObservableObject, UNUserNotificationCen
                        options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
-    /// Only source icons referenced by the inbox belong on disk. Reuse the App Support
-    /// directory's backup exclusion and file protection; cold launches need no active stream to
-    /// show these icons. Forget and Clear remove icons with no remaining entries.
+    private func persistSharedIcon(_ image: UIImage, bundleID: String, macID: String) {
+        guard savedMacStore?.savedMacsSeeded != true, let png = image.pngData() else { return }
+        try? sharedIconCache?.storePNG(png, macID: macID, bundleID: bundleID)
+    }
+
+    /// Retain the existing private inbox cache and migrate its surviving icons opportunistically.
+    /// The shared catalog lasts until Forget, while this private copy follows visible history.
     private func syncSavedIcons() {
         let keys = Set(entries.filter { !$0.event.appBundleID.isEmpty }.map(iconKey))
         var shown = icons.filter { keys.contains($0.key) }
@@ -393,8 +403,25 @@ final class NotificationInbox: NSObject, ObservableObject, UNUserNotificationCen
             let url = directory.appendingPathComponent(Self.iconFile(key))
             if let image = shown[key] {
                 if !FileManager.default.fileExists(atPath: url.path) { persistIcon(image, key: key) }
-            } else if let data = try? Data(contentsOf: url), let image = UIImage(data: data) {
+            } else if let data = try? Data(contentsOf: url) {
+                shown[key] = UIImage(data: data)
+            }
+        }
+        var visitedSources = Set<String>()
+        for entry in entries {
+            let bundleID = entry.event.appBundleID
+            let key = iconKey(for: entry)
+            // A replay may contain thousands of rows from one app; touch its icon only once.
+            guard visitedSources.insert(key).inserted else { continue }
+            if shown[key] == nil,
+               let data = sharedIconCache?.pngData(macID: entry.macID, bundleID: bundleID),
+               let image = UIImage(data: data) {
                 shown[key] = image
+                persistIcon(image, key: key)
+            }
+            if let image = shown[key],
+               sharedIconCache?.containsIcon(macID: entry.macID, bundleID: bundleID) == false {
+                persistSharedIcon(image, bundleID: bundleID, macID: entry.macID)
             }
         }
         icons = shown

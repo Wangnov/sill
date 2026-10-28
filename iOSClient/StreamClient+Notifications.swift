@@ -42,9 +42,16 @@ final class NotificationSessionRelay {
         guard lastConnection !== connection || lastSettings != subscription else { return }
         lastConnection = connection
         lastSettings = subscription
-        if subscription.enabled, let macID = client.session?.macID, let cursor = inbox.historyCursor(for: macID) {
-            subscription.historyID = cursor.historyID
-            subscription.afterSequence = cursor.lastSequence
+        if subscription.enabled, let macID = client.session?.macID {
+            // Pairing or inbox attachment can follow the catalog. Prewarm those icons too,
+            // so an app's first background alert need not wait for another connection.
+            for (bundleID, image) in client.icons {
+                inbox.cacheIcon(image, bundleID: bundleID, macID: macID)
+            }
+            if let cursor = inbox.historyCursor(for: macID) {
+                subscription.historyID = cursor.historyID
+                subscription.afterSequence = cursor.lastSequence
+            }
         }
         client.send(.notificationSubscription, payload: Wire.encode(subscription))
     }
