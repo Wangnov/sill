@@ -98,3 +98,45 @@ The observer also checks an already visible list for iPhone origin on startup an
 changes; these scans cannot import old local notifications. A 2026-10-29 device check confirmed
 one new marked fixture in the iPhone inbox, but it was absent from the Mac's visible list, so the
 complete reverse-path exclusion is still not a passed device check.
+
+
+## Upstream 0.6.0 integration (2026-11-06)
+
+The fork now includes the official `v0.6.0` release while retaining its native Mac app target,
+separate signing/keychain identity, shared saved-device store, Chinese pairing UI, background
+media suspension, and notification collection/inbox/APNs path. The merge uses the release tag;
+post-release changes on upstream `main` are not part of this integration.
+
+The integration adapts the upstream connection and lock policies to the fork's per-client state.
+Backgrounding also cancels the new Desktop retry and delayed clipboard paste; resuming restores
+source intent through the upstream selection helper. Pausing the last viewer stops the upstream
+locked-screen still capture as well as normal capture. A fork executable launched outside its app
+bundle keeps its signing identifier's keychain namespace and cannot enable test-only hooks.
+
+Notification forwarding remains independent of screen streaming. A paired device that explicitly
+subscribed may continue receiving notifications while the Mac is locked, through either its direct
+connection or APNs. This does not relax upstream's screen, input, audio, catalog, or clipboard lock
+policy; source icons unavailable behind the locked catalog use the existing cached-icon fallback.
+
+Upstream localization contributions are separated from this fork merge:
+
+- [#308](https://github.com/Saffsanity/sill/pull/308) provides the broader Simplified Chinese catalogs.
+- [#317](https://github.com/Saffsanity/sill/pull/317) extracts our connection/pairing state fixes into
+  six iOS files, independently of translated text. It is based on upstream `main`, not this fork.
+- [#238](https://github.com/Saffsanity/sill/pull/238) remains a draft with our original catalogs and
+  partial Traditional Chinese translations. Those translations need adaptation after #308 lands;
+  they do not yet cover all of its expanded interface.
+
+Verification for this integration passed all 69 offline check suites, the complete SwiftPM Release
+build, ad-hoc script packaging, the signed native Mac Debug build, and the signed iOS device Debug
+build including its notification service extension. Both app bundles contain English, Simplified
+Chinese and Traditional Chinese resources. The installed Mac 0.6.0 build kept the exact designated
+signing requirement: a normal launch retained both paired devices, screen-recording and
+Accessibility grants, the notification database/AX/source readers and APNs registration. Its TLS
+remote listener was running on the configured port. No permission reset was performed.
+
+Builds and offline checks do not establish a new end-to-end notification, lock-screen, or remote
+network pass. In particular, the reverse-path iPhone-notification loop test described above remains
+open. The installed CoreSimulator service is older than the selected Xcode toolchain, and device
+discovery currently stalls in Xcode's first-launch setup; this integration does not reset the user's
+simulators, pairing records, or system permissions to work around that tooling problem.

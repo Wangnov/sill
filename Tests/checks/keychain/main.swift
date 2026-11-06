@@ -61,6 +61,21 @@ check("bare --synthetic without a test dir → memory",
       IdentityStorePlan.choose(bundled: false, synthetic: true, entitledAccessGroup: nil, testRemoteDir: nil),
       .memory)
 
+// A copied fork executable has no Info.plist; only its signature identifies the namespace.
+let namespaces: [(String?, String?, String?)] = [
+    ("custom.remote", "local.sill.fork.mac.debug", "custom.remote"),
+    (nil, "local.sill.fork.mac.debug", "local.sill.fork.mac.debug.remote"),
+    (nil, "local.sill.fork.mac", "local.sill.fork.mac.remote"),
+    (nil, "me.saffer.sill.mac", nil),
+]
+for (configured, signed, expected) in namespaces {
+    let actual = IdentityStorePlan.namespace(configured: configured, signingIdentifier: signed)
+    if actual != expected {
+        failures += 1
+        print("FAIL: keychain namespace for \(signed ?? "none"): \(String(describing: actual))")
+    }
+}
+
 if failures == 0 {
     print("keychain: every case passed (IdentityStorePlan.choose)")
     exit(0)

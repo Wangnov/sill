@@ -3,6 +3,28 @@
   "strings": {
     "": {},
     " · ": {},
+    "%@ answered with another key, so this %@ didn’t reconnect. Tap it to connect.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ answered with another key, so this %@ didn’t reconnect. Tap it to connect."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ 响应时使用了另一个密钥，因此这台 %2$@ 未重新连接。轻点它以连接。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ 回應時使用了另一個金鑰，因此這台 %2$@ 未重新連線。點一下它以連線。"
+          }
+        }
+      }
+    },
     "%@ answered, but Sill isn’t accepting remote connections there. Check that Sill is open and Remote Access is on. If you changed its port, connect at home once.": {
       "localizations": {
         "en": {
